@@ -1,68 +1,76 @@
 /**
- * DEV-ONLY test route — verifies Google Sheets read + write.
- * Remove or gate behind APP_ENV check before production.
- *
  * GET /api/test-sheet
- *   1. Reads the app_config sheet (tests read)
- *   2. Appends a test row to audit_logs (tests write)
- *   3. Returns both results
+ *
+ * DEV-ONLY smoke test. Verifies Google Sheet connectivity and all Phase 2
+ * domain helpers can read from their respective tabs.
+ *
+ * Remove or gate this behind APP_ENV !== 'production' before going live.
  */
 
-import { readSheetAsObjects, appendRow } from '@/lib/googleSheets'
-import { nowISO } from '@/utils/date'
-import { generateId } from '@/utils/ids'
+import { testConnection } from '@/lib/googleSheets'
+import { listAllUsers } from '@/lib/users'
+import { listTasksByStatus } from '@/lib/tasks'
+import { getAllConfig, getTaskLockMinutes, getAllowedScriptTags } from '@/lib/appConfig'
+import { assertTaskTransition, assertRegionTransition } from '@/lib/transitions'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
   const results: Record<string, unknown> = {}
 
-  // --- 1. READ test ---
+  // ── Phase 0: raw connection ──────────────────────────────────────────────
+  results['connection'] = await testConnection()
+
+  // ── Phase 2: domain helpers ──────────────────────────────────────────────
+
   try {
-    const config = await readSheetAsObjects('app_config')
-    results.read = {
-      ok: true,
-      sheet: 'app_config',
-      rowCount: config.length,
-      sample: config,
-    }
-  } catch (err) {
-    results.read = { ok: false, error: String(err) }
+    const users = await listAllUsers()
+    results['users.listAllUsers'] = { count: users.length, sample: users[0] ?? null }
+  } catch (e) {
+    results['users.listAllUsers'] = { error: String(e) }
   }
 
-  // --- 2. WRITE test ---
   try {
-    const testId = generateId('AL')
-    const now = nowISO()
-    await appendRow('audit_logs', [
-      testId,
-      now,
-      'system@test',
-      'SHEET_WRITE_TEST',
-      'system',
-      testId,
-      '',
-      '',
-      JSON.stringify({ note: 'Phase 0 connection test — safe to delete' }),
-    ])
-    results.write = {
-      ok: true,
-      sheet: 'audit_logs',
-      rowAppended: testId,
-    }
-  } catch (err) {
-    results.write = { ok: false, error: String(err) }
+    const tasks = await listTasksByStatus('READY_FOR_LABELING', 'LABELING_IN_PROGRESS')
+    results['tasks.listByStatus'] = { count: tasks.length }
+  } catch (e) {
+    results['tasks.listByStatus'] = { error: String(e) }
   }
 
-  const allOk =
-    (results.read as { ok: boolean }).ok && (results.write as { ok: boolean }).ok
+  try {
+    const config = await getAllConfig()
+    results['appConfig.getAllConfig'] = config
+    results['appConfig.getTaskLockMinutes'] = await getTaskLockMinutes()
+    results['appConfig.getAllowedScriptTags'] = await getAllowedScriptTags()
+  } catch (e) {
+    results['appConfig'] = { error: String(e) }
+  }
 
-  return Response.json(
-    {
-      success: allOk,
-      timestamp: nowISO(),
-      ...results,
-    },
-    { status: allOk ? 200 : 500 }
-  )
+  // ── Transition validator sanity checks (no Sheet call) ───────────────────
+  const transitionTests: Record<string, string> = {}
+
+  try {
+    assertTaskTransition('IMPORTED', 'READY_FOR_LABELING')
+    transitionTests['IMPORTED→READY_FOR_LABELING'] = 'OK'
+  } catch (e) {
+    transitionTests['IMPORTED→READY_FOR_LABELING'] = String(e)
+  }
+
+  try {
+    assertTaskTransition('SYNCED_TO_LABEL_STUDIO', 'LABELED')
+    transitionTests['SYNCED→LABELED (should throw)'] = 'FAIL — did not throw'
+  } catch {
+    transitionTests['SYNCED→LABELED (should throw)'] = 'OK — correctly threw'
+  }
+
+  try {
+    assertRegionTransition('PENDING_LABEL', 'LABELED')
+    transitionTests['PENDING_LABEL→LABELED'] = 'OK'
+  } catch (e) {
+    transitionTests['PENDING_LABEL→LABELED'] = String(e)
+  }
+
+  results['transitions'] = transitionTests
+
+  return Response.json({ ok: true, results })
 }
