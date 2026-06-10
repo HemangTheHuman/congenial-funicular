@@ -1,0 +1,79 @@
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------
+   Design tokens — light mode (default)
+--------------------------------------------------------------- */
+:root {
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+
+  /* Brand palette */
+  --color-bg: #f8f9fa;
+  --color-surface: #ffffff;
+  --color-surface-2: #f1f3f5;
+  --color-border: #dee2e6;
+  --color-text-primary: #212529;
+  --color-text-secondary: #6c757d;
+  --color-text-muted: #adb5bd;
+
+  /* Accent */
+  --color-accent: #4361ee;
+  --color-accent-hover: #3a56d4;
+  --color-accent-foreground: #ffffff;
+
+  /* Status colours */
+  --color-success: #2d9e5f;
+  --color-warning: #f4a017;
+  --color-danger: #e5383b;
+  --color-info: #3a86ff;
+
+  /* Radii */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.10);
+}
+
+/* ---------------------------------------------------------------
+   Dark mode — follows OS preference
+--------------------------------------------------------------- */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg: #0f1117;
+    --color-surface: #1a1d27;
+    --color-surface-2: #252836;
+    --color-border: #2e3347;
+    --color-text-primary: #e9ecef;
+    --color-text-secondary: #9aa5b4;
+    --color-text-muted: #6c757d;
+
+    --color-accent: #4d72ff;
+    --color-accent-hover: #5c7fff;
+    --color-accent-foreground: #ffffff;
+
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.30);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.40);
+  }
+}
+
+/* ---------------------------------------------------------------
+   Base styles
+--------------------------------------------------------------- */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html {
+  font-family: var(--font-sans);
+  background-color: var(--color-bg);
+  color: var(--color-text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
