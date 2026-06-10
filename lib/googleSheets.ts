@@ -84,6 +84,26 @@ export async function appendRow(
 }
 
 /**
+ * Appends MULTIPLE rows in a single API call.
+ * Use this instead of looping appendRow — dramatically reduces quota usage.
+ * `rows` must all follow the same column order as the sheet headers.
+ */
+export async function appendRows(
+  sheetName: string,
+  rows: (string | number | boolean)[][]
+): Promise<void> {
+  if (rows.length === 0) return
+  const sheets = getSheetsClient()
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: getSheetId(),
+    range: sheetName,
+    valueInputOption: 'RAW',
+    requestBody: { values: rows },
+  })
+}
+
+
+/**
  * Updates a specific row (1-indexed, where row 1 = headers).
  * `rowNumber` = 2 means the first data row.
  */

@@ -2,6 +2,7 @@ import {
   readSheetAsObjects,
   findRowByColumn,
   appendRow,
+  appendRows,
   updateRow,
 } from '@/lib/googleSheets'
 import { generateId } from '@/utils/ids'
@@ -136,6 +137,28 @@ export async function createRegion(
   }
   await appendRow('regions', regionToRow(region))
   return region
+}
+
+/**
+ * Creates multiple region rows in a SINGLE Sheets API call.
+ * Always prefer this over looping createRegion — avoids quota exhaustion
+ * when importing tasks with many regions.
+ *
+ * `region_id`, `created_at`, `updated_at` are generated automatically for each.
+ */
+export async function createRegions(
+  dataArray: Omit<Region, 'region_id' | 'created_at' | 'updated_at'>[]
+): Promise<Region[]> {
+  if (dataArray.length === 0) return []
+  const now = nowISO()
+  const regions: Region[] = dataArray.map((data) => ({
+    ...data,
+    region_id: generateId('RG'),
+    created_at: now,
+    updated_at: now,
+  }))
+  await appendRows('regions', regions.map(regionToRow))
+  return regions
 }
 
 /**
