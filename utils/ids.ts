@@ -1,11 +1,6 @@
-import { randomUUID } from 'crypto'
-
 type IdPrefix = 'U' | 'T' | 'RG' | 'LB' | 'RV' | 'SQ' | 'AL'
 
-/**
- * Generates a collision-resistant ID with a typed prefix.
- * e.g. generateId('T') => 'T_a3f2c...'
- */
+/** Generate a prefixed unique ID using the Web Crypto API (works in Node.js, Edge, and browser) */
 export function generateId(prefix: IdPrefix): string {
-  return `${prefix}_${randomUUID().replace(/-/g, '')}`
+  return `${prefix}_${globalThis.crypto.randomUUID().replace(/-/g, '')}`
 }
