@@ -108,6 +108,20 @@ export async function lsPost<T = unknown>(path: string, body: unknown): Promise<
   return res.json() as Promise<T>
 }
 
+export async function lsPatch<T = unknown>(path: string, body: unknown): Promise<T> {
+  const url = `${getBaseUrl()}${path}`
+  const res = await fetch(url, {
+    method: 'PATCH',
+    headers: await authHeaders(),
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`Label Studio PATCH ${path} failed (${res.status}): ${text}`)
+  }
+  return res.json() as Promise<T>
+}
+
 // ---------------------------------------------------------------------------
 // Domain methods
 // ---------------------------------------------------------------------------
@@ -115,6 +129,33 @@ export async function lsPost<T = unknown>(path: string, body: unknown): Promise<
 /** Fetch full task data by Label Studio task ID */
 export async function getTask(lsTaskId: string | number) {
   return lsGet(`/api/tasks/${lsTaskId}/`)
+}
+
+/**
+ * Mark a task as imported in Label Studio by PATCHing its data.
+ * Sets excel="pending" (removes it from the import filter) while
+ * preserving ALL existing data fields, especially "ocr".
+ *
+ * Call this AFTER a successful import — if the Sheet write fails first,
+ * do not call this (task stays importable so you can retry).
+ *
+ * @param lsTaskId     - Label Studio task ID
+ * @param projectId    - Label Studio project ID (required by the PATCH endpoint)
+ * @param originalData - The full task.data object from the original getTask() response
+ */
+export async function markTaskImported(
+  lsTaskId: string | number,
+  projectId: string | number,
+  originalData: Record<string, unknown>
+): Promise<void> {
+  await lsPatch(`/api/tasks/${lsTaskId}/`, {
+    project: Number(projectId),
+    data: {
+      ...originalData,      // preserve ocr + any other existing fields
+      review: 'approved',   // unchanged
+      excel:  'pending',    // was 'none' → now 'pending' (excluded from next import)
+    },
+  })
 }
 
 /** A task entry as returned by the LS project task list endpoint */

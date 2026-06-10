@@ -1,5 +1,5 @@
 import { auth } from '@/auth'
-import { getTask } from '@/lib/labelStudio'
+import { getTask, markTaskImported } from '@/lib/labelStudio'
 import { parseLsTask } from '@/lib/labelStudioParser'
 import { getTaskByLsId, createTask, updateTaskStatus } from '@/lib/tasks'
 import { createRegions } from '@/lib/regions'
@@ -41,6 +41,12 @@ export async function importSingleTask(
 
   // Step 2: Fetch from Label Studio
   const raw = await getTask(lsTaskId)
+
+  // Extract project id and full data object now — needed for the LS PATCH later.
+  // We do this before parseLsTask() so we have the original data intact.
+  const rawTask = raw as { project: number; data: Record<string, unknown> }
+  const lsProjectId = rawTask.project
+  const lsOriginalData = rawTask.data ?? {}
 
   // Step 3: Parse LS JSON → normalised types
   const parsed = parseLsTask(raw)
@@ -97,6 +103,12 @@ export async function importSingleTask(
 
   // Step 7: Audit log
   await logAction(adminEmail, 'TASK_IMPORTED', 'task', task.task_id, '', lsTaskId)
+
+  // Step 8: Mark task in Label Studio so it is excluded from future import batches.
+  // Sets excel="pending" (was "none") while preserving ocr and all other data fields.
+  // This is the LAST step — if Sheet writes above failed we'd never reach here,
+  // keeping the task importable for a retry.
+  await markTaskImported(lsTaskId, lsProjectId, lsOriginalData)
 
   return { task: readyTask, regions, regionCount: regions.length, alreadyExisted: false }
 }

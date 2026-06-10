@@ -14,18 +14,18 @@ High-level flow:
 
 ```
 Admin → /admin/import
-  → selects project, picks tasks (filter: review=approved & excel=none)
+  → selects project, picks tasks (filter: review=approved & excel=none — applied server-side by LS)
   → POST /api/admin/import-task/:lsTaskId   (single)
   → POST /api/admin/import-batch            (many)
       ↓
-  getTask() from Label Studio
-      ↓
-  parseLsTask() → ParsedLsTask + ParsedLsRegion[]
-      ↓
-  createTask()        → 1 Sheets write (tasks tab)
-  createRegions()     → 1 Sheets write (regions tab, all regions at once)
-  updateTaskStatus()  → 1 Sheets write (IMPORTED → READY_FOR_LABELING)
-  logAction()         → 1 Sheets write (audit_logs tab)
+  Step 1  duplicate check (Sheet read)
+  Step 2  getTask() from Label Studio         ← raw data + project extracted here
+  Step 3  parseLsTask() → ParsedLsTask + ParsedLsRegion[]
+  Step 4  createTask()        → 1 Sheets write (tasks tab)
+  Step 5  createRegions()     → 1 Sheets write (regions tab, all regions at once)
+  Step 6  updateTaskStatus()  → 1 Sheets write (IMPORTED → READY_FOR_LABELING)
+  Step 7  logAction()         → 1 Sheets write (audit_logs tab)
+  Step 8  markTaskImported()  → PATCH /api/tasks/:id/ in LS  (excel: "none" → "pending")
 ```
 
 ---
@@ -158,7 +158,41 @@ This is equivalent to the curl:
 ```bash
 curl -G "$LS_URL/api/tasks/" \
   -H "Authorization: Bearer $TOKEN" \
-  --data-urlencode 'query={"filters":{"conjunction":"and","items":[...]}}'
+  --data-urlencode 'query={"filters":{"conjunction":"and","items":[]}}'
+```
+
+**`lsPatch` — PATCH helper:**
+
+```ts
+import { lsPatch } from '@/lib/labelStudio'
+await lsPatch('/api/tasks/156/', { project: 1, data: { ... } })
+```
+
+Same auth flow as `lsGet` / `lsPost` — uses the cached Bearer access token.
+
+**`markTaskImported` — post-import LS writeback:**
+
+```ts
+import { markTaskImported } from '@/lib/labelStudio'
+
+// Called as the LAST step in importSingleTask(), after all Sheet writes succeed.
+await markTaskImported(
+  lsTaskId,         // number or string
+  lsProjectId,      // from raw.project (number)
+  lsOriginalData    // from raw.data — full object, preserves "ocr" and all other fields
+)
+```
+
+The PATCH body is:
+```json
+{
+  "project": <projectId>,
+  "data": {
+    ...originalData,     // all existing fields preserved (especially "ocr")
+    "review": "approved",
+    "excel": "pending"   // was "none" — this removes it from future import batches
+  }
+}
 ```
 
 ---
@@ -373,6 +407,18 @@ All import logic (fetch → parse → write → transition → audit) lives in `
 
 Once written at import, `script_tag_original` must never be updated. It is the ground truth from LS. Only `script_tag_final` is modified by labelers/reviewers in later phases.
 
+### 6.6 `markTaskImported` must be the last step
+
+After a successful import, `markTaskImported()` PATCHes the LS task to set `excel="pending"`. This is deliberately the **last** action in `importSingleTask()`. Ordering matters:
+
+- If any Sheet write fails (steps 4–7), the function throws before reaching step 8.
+- The LS task stays as `excel="none"` → it remains in the import batch filter → admin can retry.
+- If step 8 (the PATCH) fails after all Sheet writes succeed, the task is already in the Sheet. The duplicate-check at step 1 will catch it on retry and return a 409 — the admin knows it's already imported.
+
+**Never reorder step 8 before the Sheet writes.** If you do, a failed Sheet write leaves the task permanently excluded from import batches with no data in the Sheet.
+
+**The `ocr` field is critical.** The PATCH must spread `originalData` (the full `task.data` from LS) to preserve `ocr` and any other existing fields. Only `excel` is changed. Do not construct the data object from scratch.
+
 ---
 
 ## 7. What Phase 4 Needs to Know
@@ -442,7 +488,8 @@ utils/
 
 lib/
   labelStudio.ts                                  [MODIFIED] JWT Bearer auth, LsTaskListEntry type,
-                                                             LsFilterQuery type, listProjectTasks + query param
+                                                             LsFilterQuery type, listProjectTasks + query param,
+                                                             lsPatch() helper, markTaskImported() post-import writeback
   labelStudioParser.ts                            [NEW] parseLsTask(), ParsedLsTask, ParsedLsRegion
   regions.ts                                      [MODIFIED] createRegions() bulk insert
   googleSheets.ts                                 [MODIFIED] appendRows() batch write helper
