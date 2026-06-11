@@ -170,6 +170,35 @@ export async function setTaskLock(
   await updateRow('tasks', r.rowNumber, taskToRow(updated))
 }
 
+/**
+ * Atomically claims a task: sets locked_by, lock_expires_at, assigned_labeler,
+ * and transitions status to LABELING_IN_PROGRESS in a single Sheet write.
+ * Cheaper than calling setTaskLock + updateTaskStatus separately (saves 1 Sheets write).
+ *
+ * Callers must run their own pre-checks (task available, user has no existing lock)
+ * before calling this.
+ */
+export async function claimTask(
+  taskId: string,
+  labelerEmail: string,
+  expiresAt: string
+): Promise<Task> {
+  const r = await findTaskRow('task_id', taskId)
+  if (!r) throw new Error(`Task not found: ${taskId}`)
+  assertTaskTransition(r.task.status, 'LABELING_IN_PROGRESS')
+
+  const updated: Task = {
+    ...r.task,
+    status: 'LABELING_IN_PROGRESS',
+    assigned_labeler: labelerEmail,
+    locked_by: labelerEmail,
+    lock_expires_at: expiresAt,
+    updated_at: nowISO(),
+  }
+  await updateRow('tasks', r.rowNumber, taskToRow(updated))
+  return updated
+}
+
 /** Clears the task lock so another user can claim it. */
 export async function releaseTaskLock(taskId: string): Promise<void> {
   const r = await findTaskRow('task_id', taskId)
@@ -187,6 +216,34 @@ export async function releaseTaskLock(taskId: string): Promise<void> {
 export function isLockExpired(task: Task): boolean {
   if (!task.lock_expires_at) return true
   return new Date(task.lock_expires_at) < new Date()
+}
+
+/**
+ * Returns the first task where the given email holds a non-expired lock.
+ * Returns null if the labeler has no active lock.
+ */
+export async function getActiveTaskForLabeler(email: string): Promise<Task | null> {
+  const rows = await readSheetAsObjects('tasks')
+  const now = new Date()
+  for (const row of rows) {
+    const t = rowToTask(row)
+    if (
+      t.locked_by === email &&
+      t.lock_expires_at &&
+      new Date(t.lock_expires_at) > now
+    ) {
+      return t
+    }
+  }
+  return null
+}
+
+/**
+ * Returns true if the given email currently holds a non-expired lock on any task.
+ * Used by the claim route to enforce the one-task-at-a-time rule.
+ */
+export async function hasActiveLock(email: string): Promise<boolean> {
+  return (await getActiveTaskForLabeler(email)) !== null
 }
 
 /**
