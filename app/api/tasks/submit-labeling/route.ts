@@ -49,9 +49,11 @@ export const POST = auth(async (req) => {
     return Response.json({ error: 'You do not hold the lock on this task' }, { status: 403 })
   }
 
-  // 2. Load active regions and check all are labeled
+  // 2. Load active regions and check all are labeled (or already submitted)
   const regions = await listRegionsByTask(task_id)
-  const done = regions.filter((r) => r.status === 'LABELED' || r.status === 'UNREADABLE')
+  const done = regions.filter(
+    (r) => r.status === 'LABELED' || r.status === 'UNREADABLE' || r.status === 'REVIEW_PENDING'
+  )
   const remaining = regions.length - done.length
 
   if (remaining > 0) {
@@ -65,9 +67,11 @@ export const POST = auth(async (req) => {
     return Response.json({ error: 'Task has no active regions' }, { status: 422 })
   }
 
-  // 3. Transition each region to REVIEW_PENDING (sequential — acceptable for 5–15 regions)
+  // 3. Transition each region to REVIEW_PENDING (skip if already there)
   for (const region of regions) {
-    await updateRegionStatus(region.region_id, 'REVIEW_PENDING')
+    if (region.status !== 'REVIEW_PENDING') {
+      await updateRegionStatus(region.region_id, 'REVIEW_PENDING')
+    }
   }
 
   // 4. Transition task status
