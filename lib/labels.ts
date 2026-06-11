@@ -1,69 +1,31 @@
-import {
-  readSheetAsObjects,
-  findRowByColumn,
-  appendRow,
-  updateRow,
-  readSheet,
-} from '@/lib/googleSheets'
+/**
+ * lib/labels.ts — SQL rewrite (Turso)
+ */
+import { db } from '@/lib/db'
 import { generateId } from '@/utils/ids'
 import { nowISO } from '@/utils/date'
 import type { Label, LabelSyncState } from '@/types/label'
 
 // ---------------------------------------------------------------------------
-// Serialiser / Deserialiser
+// Deserialiser
 // ---------------------------------------------------------------------------
 
-function rowToLabel(row: Record<string, string>): Label {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function rowToLabel(row: Record<string, any>): Label {
   return {
-    label_id:       row.label_id,
-    region_id:      row.region_id,
-    task_id:        row.task_id,
-    labeler_email:  row.labeler_email,
-    text:           row.text,
-    is_unreadable:  row.is_unreadable === 'TRUE' || row.is_unreadable === 'true',
-    version:        parseInt(row.version, 10) || 1,
-    is_latest:      row.is_latest === 'TRUE' || row.is_latest === 'true',
-    created_at:     row.created_at,
-    updated_at:     row.updated_at,
-    local_client_id:row.local_client_id,
-    sync_state:     (row.sync_state || 'SAVED') as LabelSyncState,
+    label_id:        String(row.label_id ?? ''),
+    region_id:       String(row.region_id ?? ''),
+    task_id:         String(row.task_id ?? ''),
+    labeler_email:   String(row.labeler_email ?? ''),
+    text:            String(row.text ?? ''),
+    is_unreadable:   Number(row.is_unreadable) === 1,
+    version:         Number(row.version) || 1,
+    is_latest:       Number(row.is_latest) === 1,
+    created_at:      String(row.created_at ?? ''),
+    updated_at:      String(row.updated_at ?? ''),
+    local_client_id: String(row.local_client_id ?? ''),
+    sync_state:      (String(row.sync_state ?? 'SAVED')) as LabelSyncState,
   }
-}
-
-function labelToRow(l: Label): (string | number | boolean)[] {
-  return [
-    l.label_id,
-    l.region_id,
-    l.task_id,
-    l.labeler_email,
-    l.text,
-    l.is_unreadable ? 'TRUE' : 'FALSE',
-    String(l.version),
-    l.is_latest ? 'TRUE' : 'FALSE',
-    l.created_at,
-    l.updated_at,
-    l.local_client_id,
-    l.sync_state,
-  ]
-}
-
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
-
-async function findLabelRow(
-  column: string,
-  value: string
-): Promise<{ label: Label; rowNumber: number } | null> {
-  const result = await findRowByColumn('labels', column, value)
-  if (!result) return null
-  return { label: rowToLabel(result.row), rowNumber: result.rowNumber }
-}
-
-/** Reads all label rows and returns the parsed objects. */
-async function readAllLabels(): Promise<Label[]> {
-  const rows = await readSheetAsObjects('labels')
-  return rows.map(rowToLabel)
 }
 
 // ---------------------------------------------------------------------------
@@ -72,31 +34,32 @@ async function readAllLabels(): Promise<Label[]> {
 
 /** Get a label by its label_id. */
 export async function getLabelById(labelId: string): Promise<Label | null> {
-  const r = await findLabelRow('label_id', labelId)
-  return r?.label ?? null
+  const res = await db.execute({
+    sql:  'SELECT * FROM labels WHERE label_id = ? LIMIT 1',
+    args: [labelId],
+  })
+  return res.rows.length > 0 ? rowToLabel(res.rows[0]) : null
 }
 
 /**
  * Returns the latest label for a region.
- *
- * Resilience rule: if multiple rows have is_latest = TRUE (crash between writes),
- * return the most recent by created_at. Never throw.
+ * If multiple is_latest = 1 rows exist (crash between writes), returns the most recent.
  */
 export async function getLatestLabelForRegion(regionId: string): Promise<Label | null> {
-  const all = await readAllLabels()
-  const forRegion = all.filter((l) => l.region_id === regionId && l.is_latest)
-  if (forRegion.length === 0) return null
-  // Sort descending by created_at and take the first
-  forRegion.sort((a, b) => b.created_at.localeCompare(a.created_at))
-  return forRegion[0]
+  const res = await db.execute({
+    sql:  'SELECT * FROM labels WHERE region_id = ? AND is_latest = 1 ORDER BY created_at DESC LIMIT 1',
+    args: [regionId],
+  })
+  return res.rows.length > 0 ? rowToLabel(res.rows[0]) : null
 }
 
 /** Returns all label versions for a region, sorted oldest first. */
 export async function listLabelsByRegion(regionId: string): Promise<Label[]> {
-  const all = await readAllLabels()
-  return all
-    .filter((l) => l.region_id === regionId)
-    .sort((a, b) => a.version - b.version)
+  const res = await db.execute({
+    sql:  'SELECT * FROM labels WHERE region_id = ? ORDER BY version ASC',
+    args: [regionId],
+  })
+  return res.rows.map(rowToLabel)
 }
 
 /**
@@ -104,22 +67,15 @@ export async function listLabelsByRegion(regionId: string): Promise<Label[]> {
  * Used when building the review screen or the final sync payload.
  */
 export async function listLatestLabelsByTask(taskId: string): Promise<Label[]> {
-  const all = await readAllLabels()
-  const byRegion = new Map<string, Label>()
-
-  // Collect latest labels for this task
-  for (const label of all) {
-    if (label.task_id !== taskId || !label.is_latest) continue
-    const existing = byRegion.get(label.region_id)
-    if (!existing || label.created_at > existing.created_at) {
-      byRegion.set(label.region_id, label)
-    }
-  }
-  return Array.from(byRegion.values())
+  const res = await db.execute({
+    sql:  'SELECT * FROM labels WHERE task_id = ? AND is_latest = 1',
+    args: [taskId],
+  })
+  return res.rows.map(rowToLabel)
 }
 
 /**
- * Low-level create — appends a single label row.
+ * Low-level create — inserts a single label row.
  * Prefer `createNewLabelVersion` for labeling flows.
  */
 export async function createLabel(
@@ -127,19 +83,28 @@ export async function createLabel(
 ): Promise<Label> {
   const now = nowISO()
   const label: Label = { ...data, label_id: generateId('LB'), created_at: now, updated_at: now }
-  await appendRow('labels', labelToRow(label))
+  await db.execute({
+    sql: `INSERT INTO labels
+            (label_id, region_id, task_id, labeler_email, text, is_unreadable,
+             version, is_latest, created_at, updated_at, local_client_id, sync_state)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+    args: [
+      label.label_id, label.region_id, label.task_id, label.labeler_email,
+      label.text, label.is_unreadable ? 1 : 0,
+      label.version, label.is_latest ? 1 : 0,
+      label.created_at, label.updated_at,
+      label.local_client_id, label.sync_state,
+    ],
+  })
   return label
 }
 
 /**
- * Creates a new label version for a region, handling the is_latest swap.
+ * Creates a new label version for a region, handling the is_latest swap atomically.
  *
- * Steps:
- *  1. Find the current latest label for the region (if any) and mark it is_latest = FALSE.
- *  2. Append new label row with is_latest = TRUE and version = prev.version + 1.
- *
- * Atomicity note: Two separate Sheet writes. If step 2 crashes, two is_latest = TRUE
- * rows may exist. `getLatestLabelForRegion` handles this by taking the most recent.
+ * Steps (two SQL statements):
+ *  1. UPDATE: set is_latest = 0 for all existing labels for this region.
+ *  2. INSERT: new label row with is_latest = 1 and version = prev.version + 1.
  */
 export async function createNewLabelVersion(
   regionId: string,
@@ -149,16 +114,19 @@ export async function createNewLabelVersion(
   isUnreadable: boolean,
   localClientId = ''
 ): Promise<Label> {
-  // Step 1: Demote previous latest
-  const prev = await findLabelRow('region_id', regionId)
-  let nextVersion = 1
-  if (prev && prev.label.is_latest) {
-    nextVersion = prev.label.version + 1
-    const demoted: Label = { ...prev.label, is_latest: false, updated_at: nowISO() }
-    await updateRow('labels', prev.rowNumber, labelToRow(demoted))
-  }
+  const now = nowISO()
 
-  // Step 2: Create new latest
+  // Get current latest to determine next version number
+  const prev = await getLatestLabelForRegion(regionId)
+  const nextVersion = prev ? prev.version + 1 : 1
+
+  // Step 1: demote all previous latest labels for this region
+  await db.execute({
+    sql:  'UPDATE labels SET is_latest = 0, updated_at = ? WHERE region_id = ? AND is_latest = 1',
+    args: [now, regionId],
+  })
+
+  // Step 2: insert new latest
   return createLabel({
     region_id:       regionId,
     task_id:         taskId,

@@ -2,7 +2,7 @@ import { auth } from '@/auth'
 import { getTask, markTaskImported } from '@/lib/labelStudio'
 import { parseLsTask } from '@/lib/labelStudioParser'
 import { getTaskByLsId, createTask, updateTaskStatus } from '@/lib/tasks'
-import { createRegions } from '@/lib/regions'
+import { createRegionsBatch } from '@/lib/regions'
 import { logAction } from '@/lib/auditLog'
 import type { Task } from '@/types/task'
 import type { Region } from '@/types/region'
@@ -75,8 +75,8 @@ export async function importSingleTask(
     completed_at:          '',
   })
 
-  // Step 5: Create ALL region rows in ONE Sheets API call
-  const regions = await createRegions(
+  // Step 5: Create ALL region rows in a single Turso batch insert
+  const regions = await createRegionsBatch(
     parsed.regions.map((r) => ({
       task_id:             task.task_id,
       ls_task_id:          task.ls_task_id,

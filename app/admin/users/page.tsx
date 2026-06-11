@@ -1,5 +1,5 @@
 import { auth } from '@/auth'
-import { readSheetAsObjects } from '@/lib/googleSheets'
+import { listAllUsers } from '@/lib/users'
 import { UserBadge } from '@/components/auth/UserBadge'
 import { SignOutButton } from '@/components/auth/SignOutButton'
 import { Separator } from '@/components/ui/separator'
@@ -13,9 +13,9 @@ import { ArrowLeft } from 'lucide-react'
 import type { UserRole, UserStatus } from '@/types/user'
 
 const statusColors: Record<UserStatus, string> = {
-  ACTIVE: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
+  ACTIVE:           'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
   PENDING_APPROVAL: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200',
-  DISABLED: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200',
+  DISABLED:         'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200',
 }
 
 export const dynamic = 'force-dynamic'
@@ -24,12 +24,12 @@ export default async function AdminUsersPage() {
   const session = await auth()
   const currentUser = session!.user
 
-  const users = await readSheetAsObjects('users')
+  const allUsers = await listAllUsers()
   // Sort: pending first, then active, then disabled
-  const sorted = [...users].sort((a, b) => {
-    const order: Record<string, number> = { PENDING_APPROVAL: 0, ACTIVE: 1, DISABLED: 2 }
-    return (order[a.status] ?? 9) - (order[b.status] ?? 9)
-  })
+  const statusOrder: Record<string, number> = { PENDING_APPROVAL: 0, ACTIVE: 1, DISABLED: 2 }
+  const sorted = [...allUsers].sort(
+    (a, b) => (statusOrder[a.status] ?? 9) - (statusOrder[b.status] ?? 9)
+  )
 
   return (
     <div className="min-h-screen bg-background">

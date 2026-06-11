@@ -1,94 +1,60 @@
-import { readSheetAsObjects } from '@/lib/googleSheets'
-
-// ---------------------------------------------------------------------------
-// Internal cache
-// ---------------------------------------------------------------------------
-
-// Avoid re-reading the config sheet for every config key in a single request.
-let _cache: Map<string, string> | null = null
-let _cacheAt = 0
-const CACHE_TTL_MS = 60_000 // 1 minute — config rarely changes
-
-async function loadConfig(): Promise<Map<string, string>> {
-  const now = Date.now()
-  if (_cache && now - _cacheAt < CACHE_TTL_MS) return _cache
-
-  const rows = await readSheetAsObjects('app_config')
-  const map = new Map<string, string>()
-  for (const row of rows) {
-    if (row.key) map.set(row.key, row.value ?? '')
-  }
-  _cache = map
-  _cacheAt = now
-  return map
-}
-
-// ---------------------------------------------------------------------------
-// Public API — generic
-// ---------------------------------------------------------------------------
-
-/** Returns the raw string value for a config key, or null if not found. */
-export async function getConfig(key: string): Promise<string | null> {
-  const map = await loadConfig()
-  return map.has(key) ? (map.get(key) ?? null) : null
-}
-
-/** Returns the raw string value, falling back to `defaultValue` if the key is missing. */
-export async function getConfigOrDefault(key: string, defaultValue: string): Promise<string> {
-  return (await getConfig(key)) ?? defaultValue
-}
-
-/** Returns all config entries as a plain object. */
-export async function getAllConfig(): Promise<Record<string, string>> {
-  const map = await loadConfig()
-  return Object.fromEntries(map.entries())
-}
-
-// ---------------------------------------------------------------------------
-// Public API — typed convenience getters
-// ---------------------------------------------------------------------------
-
 /**
- * How long a task lock lasts in minutes.
- * Sheet key: TASK_LOCK_MINUTES. Default: 45.
+ * lib/appConfig.ts
+ *
+ * Application configuration as a hardcoded TypeScript constant.
+ * Values that benefit from env-var overrides are read from process.env.
+ * No database read required — eliminates the previous Google Sheets config tab.
  */
+
+export const APP_CONFIG = {
+  /** How long a task lock lasts (minutes). Override via TASK_LOCK_MINUTES env var. */
+  TASK_LOCK_MINUTES: parseInt(process.env.TASK_LOCK_MINUTES ?? '45', 10) || 45,
+
+  /** Script tags shown in reviewer dropdowns. */
+  ALLOWED_SCRIPT_TAGS: ['KAITHI', 'DEVANAGARI', 'ENGLISH', 'OTHER'] as string[],
+
+  /** Crop padding around bbox in the workspace preview (0 = exact bbox). */
+  CROP_PADDING_PERCENT: 0,
+
+  /** Maximum review rounds before escalation. Override via MAX_REVIEW_ROUNDS env var. */
+  MAX_REVIEW_ROUNDS: parseInt(process.env.MAX_REVIEW_ROUNDS ?? '3', 10) || 3,
+} as const
+
+// ---------------------------------------------------------------------------
+// Compatibility shims — keep async signatures so callers need no changes
+// ---------------------------------------------------------------------------
+
 export async function getTaskLockMinutes(): Promise<number> {
-  const v = await getConfigOrDefault('TASK_LOCK_MINUTES', '45')
-  return parseInt(v, 10) || 45
+  return APP_CONFIG.TASK_LOCK_MINUTES
 }
 
-/**
- * List of script tags allowed in the reviewer dropdown.
- * Sheet key: ALLOWED_SCRIPT_TAGS. Default: KAITHI,DEVANAGARI,ENGLISH,OTHER.
- */
 export async function getAllowedScriptTags(): Promise<string[]> {
-  const v = await getConfigOrDefault(
-    'ALLOWED_SCRIPT_TAGS',
-    'KAITHI,DEVANAGARI,ENGLISH,OTHER'
-  )
-  return v.split(',').map((s) => s.trim()).filter(Boolean)
+  return [...APP_CONFIG.ALLOWED_SCRIPT_TAGS]
 }
 
-/**
- * Crop padding applied around a bbox when generating the crop preview.
- * Sheet key: CROP_PADDING_PERCENT. Default: 0.015 (1.5%).
- */
 export async function getCropPaddingPercent(): Promise<number> {
-  const v = await getConfigOrDefault('CROP_PADDING_PERCENT', '0.015')
-  return parseFloat(v) || 0.015
+  return APP_CONFIG.CROP_PADDING_PERCENT
 }
 
-/**
- * Maximum number of review rounds before escalation.
- * Sheet key: MAX_REVIEW_ROUNDS. Default: 3.
- */
 export async function getMaxReviewRounds(): Promise<number> {
-  const v = await getConfigOrDefault('MAX_REVIEW_ROUNDS', '3')
-  return parseInt(v, 10) || 3
+  return APP_CONFIG.MAX_REVIEW_ROUNDS
 }
 
-/** Invalidates the in-memory cache — useful in tests or after admin updates config. */
-export function invalidateConfigCache(): void {
-  _cache = null
-  _cacheAt = 0
+/** No-op — kept for API compatibility. */
+export function invalidateConfigCache(): void {}
+
+export async function getConfig(key: keyof typeof APP_CONFIG): Promise<string | null> {
+  const v = APP_CONFIG[key]
+  return v !== undefined ? String(v) : null
+}
+
+export async function getConfigOrDefault(key: string, defaultValue: string): Promise<string> {
+  const v = APP_CONFIG[key as keyof typeof APP_CONFIG]
+  return v !== undefined ? String(v) : defaultValue
+}
+
+export async function getAllConfig(): Promise<Record<string, string>> {
+  return Object.fromEntries(
+    Object.entries(APP_CONFIG).map(([k, v]) => [k, String(v)])
+  )
 }

@@ -1,56 +1,28 @@
-import {
-  readSheetAsObjects,
-  findRowByColumn,
-  appendRow,
-  updateRow,
-} from '@/lib/googleSheets'
+/**
+ * lib/syncQueue.ts — SQL rewrite (Turso)
+ */
+import { db } from '@/lib/db'
 import { generateId } from '@/utils/ids'
 import { nowISO } from '@/utils/date'
 import type { SyncQueueEntry, SyncQueueStatus } from '@/types/sync-queue'
 
 // ---------------------------------------------------------------------------
-// Serialiser / Deserialiser
+// Deserialiser
 // ---------------------------------------------------------------------------
 
-function rowToEntry(row: Record<string, string>): SyncQueueEntry {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function rowToEntry(row: Record<string, any>): SyncQueueEntry {
   return {
-    sync_id:       row.sync_id,
-    task_id:       row.task_id,
-    ls_task_id:    row.ls_task_id,
-    status:        row.status as SyncQueueStatus,
-    attempt_count: parseInt(row.attempt_count, 10) || 0,
-    last_error:    row.last_error,
-    created_at:    row.created_at,
-    updated_at:    row.updated_at,
-    synced_at:     row.synced_at,
+    sync_id:       String(row.sync_id ?? ''),
+    task_id:       String(row.task_id ?? ''),
+    ls_task_id:    String(row.ls_task_id ?? ''),
+    status:        String(row.status ?? 'PENDING') as SyncQueueStatus,
+    attempt_count: Number(row.attempt_count) || 0,
+    last_error:    String(row.last_error ?? ''),
+    created_at:    String(row.created_at ?? ''),
+    updated_at:    String(row.updated_at ?? ''),
+    synced_at:     String(row.synced_at ?? ''),
   }
-}
-
-function entryToRow(e: SyncQueueEntry): (string | number | boolean)[] {
-  return [
-    e.sync_id,
-    e.task_id,
-    e.ls_task_id,
-    e.status,
-    String(e.attempt_count),
-    e.last_error,
-    e.created_at,
-    e.updated_at,
-    e.synced_at,
-  ]
-}
-
-// ---------------------------------------------------------------------------
-// Internal
-// ---------------------------------------------------------------------------
-
-async function findEntryRow(
-  column: string,
-  value: string
-): Promise<{ entry: SyncQueueEntry; rowNumber: number } | null> {
-  const result = await findRowByColumn('sync_queue', column, value)
-  if (!result) return null
-  return { entry: rowToEntry(result.row), rowNumber: result.rowNumber }
 }
 
 // ---------------------------------------------------------------------------
@@ -59,8 +31,11 @@ async function findEntryRow(
 
 /** Get the sync queue entry for a task, or null if not queued. */
 export async function getSyncEntry(taskId: string): Promise<SyncQueueEntry | null> {
-  const r = await findEntryRow('task_id', taskId)
-  return r?.entry ?? null
+  const res = await db.execute({
+    sql:  'SELECT * FROM sync_queue WHERE task_id = ? LIMIT 1',
+    args: [taskId],
+  })
+  return res.rows.length > 0 ? rowToEntry(res.rows[0]) : null
 }
 
 /**
@@ -86,7 +61,17 @@ export async function createSyncEntry(
     updated_at:    now,
     synced_at:     '',
   }
-  await appendRow('sync_queue', entryToRow(entry))
+  await db.execute({
+    sql: `INSERT INTO sync_queue
+            (sync_id, task_id, ls_task_id, status, attempt_count,
+             last_error, created_at, updated_at, synced_at)
+          VALUES (?,?,?,?,?,?,?,?,?)`,
+    args: [
+      entry.sync_id, entry.task_id, entry.ls_task_id, entry.status,
+      entry.attempt_count, entry.last_error, entry.created_at,
+      entry.updated_at, entry.synced_at,
+    ],
+  })
   return entry
 }
 
@@ -99,31 +84,33 @@ export async function updateSyncStatus(
   status: SyncQueueStatus,
   error = ''
 ): Promise<void> {
-  const r = await findEntryRow('task_id', taskId)
-  if (!r) throw new Error(`Sync queue entry not found for task: ${taskId}`)
-
   const now = nowISO()
-  const updated: SyncQueueEntry = {
-    ...r.entry,
-    status,
-    attempt_count: status === 'FAILED' ? r.entry.attempt_count + 1 : r.entry.attempt_count,
-    last_error:    status === 'FAILED' ? error : '',
-    synced_at:     status === 'SYNCED' ? now : r.entry.synced_at,
-    updated_at:    now,
-  }
-  await updateRow('sync_queue', r.rowNumber, entryToRow(updated))
+  await db.execute({
+    sql: `UPDATE sync_queue SET
+            status        = ?,
+            attempt_count = CASE WHEN ? = 'FAILED' THEN attempt_count + 1 ELSE attempt_count END,
+            last_error    = CASE WHEN ? = 'FAILED' THEN ? ELSE '' END,
+            synced_at     = CASE WHEN ? = 'SYNCED'  THEN ? ELSE synced_at END,
+            updated_at    = ?
+          WHERE task_id = ?`,
+    args: [status, status, status, error, status, now, now, taskId],
+  })
 }
 
 /** Returns all entries with status PENDING. */
 export async function listPendingSyncEntries(): Promise<SyncQueueEntry[]> {
-  const rows = await readSheetAsObjects('sync_queue')
-  return rows.map(rowToEntry).filter((e) => e.status === 'PENDING')
+  const res = await db.execute(
+    "SELECT * FROM sync_queue WHERE status = 'PENDING' ORDER BY created_at ASC"
+  )
+  return res.rows.map(rowToEntry)
 }
 
 /** Returns all entries with status FAILED (eligible for retry). */
 export async function listFailedSyncEntries(): Promise<SyncQueueEntry[]> {
-  const rows = await readSheetAsObjects('sync_queue')
-  return rows.map(rowToEntry).filter((e) => e.status === 'FAILED')
+  const res = await db.execute(
+    "SELECT * FROM sync_queue WHERE status = 'FAILED' ORDER BY updated_at ASC"
+  )
+  return res.rows.map(rowToEntry)
 }
 
 /** Resets a failed entry back to PENDING so it can be retried. */

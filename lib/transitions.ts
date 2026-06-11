@@ -12,8 +12,9 @@ import type { RegionStatus } from '@/types/region'
 const TASK_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
   IMPORTED:                ['READY_FOR_LABELING'],
   READY_FOR_LABELING:      ['LABELING_IN_PROGRESS'],
-  // Release lock sends task back to READY_FOR_LABELING
-  LABELING_IN_PROGRESS:    ['LABELED', 'READY_FOR_LABELING'],
+  // Release lock sends task back to READY_FOR_LABELING.
+  // Submit sends directly to READY_FOR_REVIEW (skipping the transient LABELED state).
+  LABELING_IN_PROGRESS:    ['LABELED', 'READY_FOR_LABELING', 'READY_FOR_REVIEW'],
   LABELED:                 ['READY_FOR_REVIEW'],
   READY_FOR_REVIEW:        ['REVIEWING_IN_PROGRESS'],
   // Reviewer can release (back to READY_FOR_REVIEW), approve all (FINAL_APPROVED),
@@ -39,8 +40,9 @@ const TASK_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
  */
 const REGION_TRANSITIONS: Record<RegionStatus, RegionStatus[]> = {
   PENDING_LABEL:    ['LABELED', 'UNREADABLE'],
-  LABELED:          ['REVIEW_PENDING'],
-  UNREADABLE:       ['REVIEW_PENDING'],
+  // Allow reset to PENDING_LABEL if a task is released mid-progress
+  LABELED:          ['REVIEW_PENDING', 'PENDING_LABEL'],
+  UNREADABLE:       ['REVIEW_PENDING', 'PENDING_LABEL'],
   REVIEW_PENDING:   ['APPROVED', 'TEXT_WRONG', 'SCRIPT_WRONG', 'BOTH_WRONG', 'NEEDS_CORRECTION'],
   // Script wrong but text ok — reviewer fixes script, region becomes APPROVED
   SCRIPT_WRONG:     ['APPROVED'],

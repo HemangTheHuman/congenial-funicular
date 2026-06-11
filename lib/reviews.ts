@@ -1,53 +1,29 @@
-import {
-  readSheetAsObjects,
-  findRowByColumn,
-  appendRow,
-} from '@/lib/googleSheets'
+/**
+ * lib/reviews.ts — SQL rewrite (Turso)
+ */
+import { db } from '@/lib/db'
 import { generateId } from '@/utils/ids'
 import { nowISO } from '@/utils/date'
 import type { Review, ReviewStatus } from '@/types/review'
 
 // ---------------------------------------------------------------------------
-// Serialiser / Deserialiser
+// Deserialiser
 // ---------------------------------------------------------------------------
 
-function rowToReview(row: Record<string, string>): Review {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function rowToReview(row: Record<string, any>): Review {
   return {
-    review_id:      row.review_id,
-    region_id:      row.region_id,
-    task_id:        row.task_id,
-    reviewer_email: row.reviewer_email,
-    review_status:  row.review_status as ReviewStatus,
-    final_script_tag: row.final_script_tag,
-    review_note:    row.review_note,
-    review_round:   parseInt(row.review_round, 10) || 1,
-    created_at:     row.created_at,
-    updated_at:     row.updated_at,
+    review_id:        String(row.review_id ?? ''),
+    region_id:        String(row.region_id ?? ''),
+    task_id:          String(row.task_id ?? ''),
+    reviewer_email:   String(row.reviewer_email ?? ''),
+    review_status:    String(row.review_status ?? '') as ReviewStatus,
+    final_script_tag: String(row.final_script_tag ?? ''),
+    review_note:      String(row.review_note ?? ''),
+    review_round:     Number(row.review_round) || 1,
+    created_at:       String(row.created_at ?? ''),
+    updated_at:       String(row.updated_at ?? ''),
   }
-}
-
-function reviewToRow(r: Review): (string | number | boolean)[] {
-  return [
-    r.review_id,
-    r.region_id,
-    r.task_id,
-    r.reviewer_email,
-    r.review_status,
-    r.final_script_tag,
-    r.review_note,
-    String(r.review_round),
-    r.created_at,
-    r.updated_at,
-  ]
-}
-
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
-
-async function readAllReviews(): Promise<Review[]> {
-  const rows = await readSheetAsObjects('reviews')
-  return rows.map(rowToReview)
 }
 
 // ---------------------------------------------------------------------------
@@ -56,28 +32,38 @@ async function readAllReviews(): Promise<Review[]> {
 
 /** Get a review by its review_id. */
 export async function getReviewById(reviewId: string): Promise<Review | null> {
-  const result = await findRowByColumn('reviews', 'review_id', reviewId)
-  return result ? rowToReview(result.row) : null
+  const res = await db.execute({
+    sql:  'SELECT * FROM reviews WHERE review_id = ? LIMIT 1',
+    args: [reviewId],
+  })
+  return res.rows.length > 0 ? rowToReview(res.rows[0]) : null
 }
 
 /** Returns all reviews for a region (all rounds), sorted oldest first. */
 export async function listReviewsByRegion(regionId: string): Promise<Review[]> {
-  const all = await readAllReviews()
-  return all
-    .filter((r) => r.region_id === regionId)
-    .sort((a, b) => a.review_round - b.review_round)
+  const res = await db.execute({
+    sql:  'SELECT * FROM reviews WHERE region_id = ? ORDER BY review_round ASC',
+    args: [regionId],
+  })
+  return res.rows.map(rowToReview)
 }
 
 /** Returns the most recent review for a region. */
 export async function getLatestReviewForRegion(regionId: string): Promise<Review | null> {
-  const reviews = await listReviewsByRegion(regionId)
-  return reviews.length > 0 ? reviews[reviews.length - 1] : null
+  const res = await db.execute({
+    sql:  'SELECT * FROM reviews WHERE region_id = ? ORDER BY review_round DESC LIMIT 1',
+    args: [regionId],
+  })
+  return res.rows.length > 0 ? rowToReview(res.rows[0]) : null
 }
 
 /** Returns all reviews for a task (all regions, all rounds). */
 export async function listReviewsByTask(taskId: string): Promise<Review[]> {
-  const all = await readAllReviews()
-  return all.filter((r) => r.task_id === taskId)
+  const res = await db.execute({
+    sql:  'SELECT * FROM reviews WHERE task_id = ? ORDER BY region_id, review_round ASC',
+    args: [taskId],
+  })
+  return res.rows.map(rowToReview)
 }
 
 /**
@@ -90,10 +76,20 @@ export async function createReview(
   const now = nowISO()
   const review: Review = {
     ...data,
-    review_id: generateId('RV'),
+    review_id:  generateId('RV'),
     created_at: now,
     updated_at: now,
   }
-  await appendRow('reviews', reviewToRow(review))
+  await db.execute({
+    sql: `INSERT INTO reviews
+            (review_id, region_id, task_id, reviewer_email, review_status,
+             final_script_tag, review_note, review_round, created_at, updated_at)
+          VALUES (?,?,?,?,?,?,?,?,?,?)`,
+    args: [
+      review.review_id, review.region_id, review.task_id, review.reviewer_email,
+      review.review_status, review.final_script_tag, review.review_note,
+      review.review_round, review.created_at, review.updated_at,
+    ],
+  })
   return review
 }

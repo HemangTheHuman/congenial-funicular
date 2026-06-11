@@ -1,5 +1,5 @@
 import { auth } from '@/auth'
-import { findRowByColumn, updateRow } from '@/lib/googleSheets'
+import { db } from '@/lib/db'
 import { logAction } from '@/lib/auditLog'
 import { nowISO } from '@/utils/date'
 import type { UserRole, UserStatus } from '@/types/user'
@@ -33,36 +33,24 @@ export const POST = auth(async (req) => {
     )
   }
 
-  const result = await findRowByColumn('users', 'user_id', userId)
-  if (!result) {
+  const res = await db.execute({
+    sql:  'SELECT role FROM users WHERE user_id = ? LIMIT 1',
+    args: [userId],
+  })
+  if (res.rows.length === 0) {
     return Response.json({ error: 'User not found' }, { status: 404 })
   }
 
-  const { row, rowNumber } = result
-  const oldRole = row.role
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oldRole = String((res.rows[0] as any).role)
   const now = nowISO()
 
-  await updateRow('users', rowNumber, [
-    row.user_id, row.email, row.name, row.password_hash,
-    role,          // updated role
-    'ACTIVE' as UserStatus, // activate the user
-    row.assigned_batch,
-    row.created_at, now, row.last_login_at, row.notes,
-  ])
-
-  await logAction(
-    session.user.email,
-    'ROLE_ASSIGNED',
-    'user',
-    userId,
-    oldRole,
-    role
-  )
-
-  return Response.json({
-    message: 'Role assigned successfully',
-    userId,
-    role,
-    status: 'ACTIVE',
+  await db.execute({
+    sql:  "UPDATE users SET role = ?, status = 'ACTIVE', updated_at = ? WHERE user_id = ?",
+    args: [role, now, userId],
   })
+
+  await logAction(session.user.email ?? '', 'ROLE_ASSIGNED', 'user', userId, oldRole, role)
+
+  return Response.json({ message: 'Role assigned successfully', userId, role, status: 'ACTIVE' })
 })

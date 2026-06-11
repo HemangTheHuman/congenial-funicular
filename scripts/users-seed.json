@@ -1,0 +1,41 @@
+[
+  {
+    "user_id": "U_b61bbc8bc4f94ab5aa49f9ee9ace3628",
+    "email": "work.hemang@gmail.com",
+    "name": "Hemang Joshi",
+    "password_hash": "$2b$12$CgnD4vZAl24euXmJnSF69uNz9tVLkB/2n0jDNc8WEA1EIK3zX67kS",
+    "role": "ADMIN",
+    "status": "ACTIVE",
+    "assigned_batch": "",
+    "created_at": "2026-06-10T10:21:46.539Z",
+    "updated_at": "2026-06-10T13:03:59.773Z",
+    "last_login_at": "2026-06-10T13:03:59.773Z",
+    "notes": ""
+  },
+  {
+    "user_id": "U_8029d3b46f214234a7eaa4f20fa5f61b",
+    "email": "hemanghades@gmail.com",
+    "name": "Hemang Label",
+    "password_hash": "$2b$12$4BHo7MknpMCU4BouYEwgRO.LYraOMsvtz1TLgHTJaUQr.O2hgEq1C",
+    "role": "LABELER",
+    "status": "ACTIVE",
+    "assigned_batch": "",
+    "created_at": "2026-06-10T10:22:50.051Z",
+    "updated_at": "2026-06-11T06:32:10.935Z",
+    "last_login_at": "2026-06-11T06:32:10.935Z",
+    "notes": ""
+  },
+  {
+    "user_id": "U_cb91b121d155482e8c757d8fa54f834c",
+    "email": "[EMAIL_ADDRESS]",
+    "name": "Hemang Reviewer",
+    "password_hash": "$2b$12$BSRSMuRZdN8xeEBbXsVD8u/3F21v9Dh9gUuFOmGOdKunE6J7Ln.lO",
+    "role": "REVIEWER",
+    "status": "ACTIVE",
+    "assigned_batch": "",
+    "created_at": "2026-06-10T10:23:36.051Z",
+    "updated_at": "2026-06-10T10:26:00.667Z",
+    "last_login_at": "2026-06-10T10:26:00.667Z",
+    "notes": ""
+  }
+]

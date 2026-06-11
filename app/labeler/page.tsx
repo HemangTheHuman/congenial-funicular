@@ -6,7 +6,7 @@ import {
   listAvailableTasksForLabeling,
   getActiveTaskForLabeler,
 } from '@/lib/tasks'
-import { readSheetAsObjects } from '@/lib/googleSheets'
+import { db } from '@/lib/db'
 import { nowISO } from '@/utils/date'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -118,25 +118,28 @@ export default async function LabelerDashboardPage() {
   const email = user.email ?? ''
 
   // Parallel data fetching
-  const [available, myTask, labelRows] = await Promise.all([
+  const todayPrefix = nowISO().slice(0, 10)
+  const [available, myTask, statsRes] = await Promise.all([
     listAvailableTasksForLabeling(),
     getActiveTaskForLabeler(email),
-    readSheetAsObjects('labels'),
+    db.execute({
+      sql: `SELECT
+              COUNT(*) as all_time,
+              SUM(CASE WHEN created_at LIKE ? THEN 1 ELSE 0 END) as today
+            FROM labels
+            WHERE labeler_email = ? AND is_latest = 1`,
+      args: [`${todayPrefix}%`, email],
+    }),
   ])
 
   // Filter so the user's own task isn't also listed as "available"
   const availableForOthers = available.filter((t) => t.locked_by !== email)
 
-  // Stats
-  const todayPrefix = nowISO().slice(0, 10)
-  let labeledToday = 0
-  let labeledAllTime = 0
-  for (const row of labelRows) {
-    if (row.labeler_email !== email) continue
-    if (row.is_latest !== 'TRUE' && row.is_latest !== 'true') continue
-    labeledAllTime++
-    if (row.created_at?.startsWith(todayPrefix)) labeledToday++
-  }
+  // Stats from SQL aggregate
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const statsRow = statsRes.rows[0] as any
+  const labeledAllTime = Number(statsRow?.all_time) || 0
+  const labeledToday   = Number(statsRow?.today)    || 0
 
   const myProgress = myTask ? progressPercent(myTask) : 0
 

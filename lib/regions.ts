@@ -1,220 +1,191 @@
-import {
-  readSheetAsObjects,
-  findRowByColumn,
-  appendRow,
-  appendRows,
-  updateRow,
-} from '@/lib/googleSheets'
+/**
+ * lib/regions.ts — SQL rewrite (Turso)
+ */
+import { db } from '@/lib/db'
 import { generateId } from '@/utils/ids'
 import { nowISO } from '@/utils/date'
 import { assertRegionTransition } from '@/lib/transitions'
-import { REGION_COLUMNS } from '@/lib/sheetColumns'
 import type { Region, RegionStatus } from '@/types/region'
 
 // ---------------------------------------------------------------------------
-// Serialiser / Deserialiser
+// Deserialiser
 // ---------------------------------------------------------------------------
 
-function rowToRegion(row: Record<string, string>): Region {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function rowToRegion(row: Record<string, any>): Region {
   return {
-    region_id:            row.region_id,
-    task_id:              row.task_id,
-    ls_task_id:           row.ls_task_id,
-    ls_region_id:         row.ls_region_id,
-    order_index:          parseInt(row.order_index, 10) || 0,
-    bbox_x_percent:       parseFloat(row.bbox_x_percent) || 0,
-    bbox_y_percent:       parseFloat(row.bbox_y_percent) || 0,
-    bbox_width_percent:   parseFloat(row.bbox_width_percent) || 0,
-    bbox_height_percent:  parseFloat(row.bbox_height_percent) || 0,
-    bbox_xmin:            parseFloat(row.bbox_xmin) || 0,
-    bbox_ymin:            parseFloat(row.bbox_ymin) || 0,
-    bbox_xmax:            parseFloat(row.bbox_xmax) || 0,
-    bbox_ymax:            parseFloat(row.bbox_ymax) || 0,
-    rotation:             parseFloat(row.rotation) || 0,
-    script_tag_original:  row.script_tag_original,
-    script_tag_final:     row.script_tag_final,
-    status:               row.status as RegionStatus,
-    is_active:            row.is_active === 'TRUE' || row.is_active === 'true',
-    created_at:           row.created_at,
-    updated_at:           row.updated_at,
+    region_id:           String(row.region_id ?? ''),
+    task_id:             String(row.task_id ?? ''),
+    ls_task_id:          String(row.ls_task_id ?? ''),
+    ls_region_id:        String(row.ls_region_id ?? ''),
+    order_index:         Number(row.order_index) || 0,
+    bbox_x_percent:      Number(row.bbox_x_percent) || 0,
+    bbox_y_percent:      Number(row.bbox_y_percent) || 0,
+    bbox_width_percent:  Number(row.bbox_width_percent) || 0,
+    bbox_height_percent: Number(row.bbox_height_percent) || 0,
+    bbox_xmin:           Number(row.bbox_xmin) || 0,
+    bbox_ymin:           Number(row.bbox_ymin) || 0,
+    bbox_xmax:           Number(row.bbox_xmax) || 0,
+    bbox_ymax:           Number(row.bbox_ymax) || 0,
+    rotation:            Number(row.rotation) || 0,
+    script_tag_original: String(row.script_tag_original ?? ''),
+    script_tag_final:    String(row.script_tag_final ?? ''),
+    status:              String(row.status ?? 'PENDING_LABEL') as RegionStatus,
+    is_active:           Number(row.is_active) === 1,
+    created_at:          String(row.created_at ?? ''),
+    updated_at:          String(row.updated_at ?? ''),
   }
-}
-
-function regionToRow(r: Region): (string | number | boolean)[] {
-  return [
-    r.region_id,
-    r.task_id,
-    r.ls_task_id,
-    r.ls_region_id,
-    String(r.order_index),
-    String(r.bbox_x_percent),
-    String(r.bbox_y_percent),
-    String(r.bbox_width_percent),
-    String(r.bbox_height_percent),
-    String(r.bbox_xmin),
-    String(r.bbox_ymin),
-    String(r.bbox_xmax),
-    String(r.bbox_ymax),
-    String(r.rotation),
-    r.script_tag_original,
-    r.script_tag_final,
-    r.status,
-    r.is_active ? 'TRUE' : 'FALSE',
-    r.created_at,
-    r.updated_at,
-  ]
-}
-
-// Sanity check — regionToRow must produce REGION_COLUMNS.length values
-const _: (typeof REGION_COLUMNS)['length'] extends 20 ? true : false = true
-void _
-
-// ---------------------------------------------------------------------------
-// Internal
-// ---------------------------------------------------------------------------
-
-async function findRegionRow(
-  column: string,
-  value: string
-): Promise<{ region: Region; rowNumber: number } | null> {
-  const result = await findRowByColumn('regions', column, value)
-  if (!result) return null
-  return { region: rowToRegion(result.row), rowNumber: result.rowNumber }
 }
 
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
-/** Get a single region by its internal region_id. */
+/** Get a region by its region_id. */
 export async function getRegionById(regionId: string): Promise<Region | null> {
-  const r = await findRegionRow('region_id', regionId)
-  return r?.region ?? null
+  const res = await db.execute({
+    sql:  'SELECT * FROM regions WHERE region_id = ? LIMIT 1',
+    args: [regionId],
+  })
+  return res.rows.length > 0 ? rowToRegion(res.rows[0]) : null
 }
 
-/**
- * Returns all regions for a task, sorted by order_index ascending.
- * Only active regions (is_active = TRUE) are returned by default.
- */
-export async function listRegionsByTask(
-  taskId: string,
-  includeInactive = false
-): Promise<Region[]> {
-  const rows = await readSheetAsObjects('regions')
-  return rows
-    .map(rowToRegion)
-    .filter((r) => r.task_id === taskId && (includeInactive || r.is_active))
-    .sort((a, b) => a.order_index - b.order_index)
+/** Returns all active regions for a task, ordered by order_index. */
+export async function listRegionsByTask(taskId: string): Promise<Region[]> {
+  const res = await db.execute({
+    sql:  'SELECT * FROM regions WHERE task_id = ? AND is_active = 1 ORDER BY order_index ASC',
+    args: [taskId],
+  })
+  return res.rows.map(rowToRegion)
 }
 
-/**
- * Returns regions for a task filtered by one or more statuses.
- * Only active regions are returned.
- */
-export async function listRegionsByTaskAndStatus(
-  taskId: string,
-  ...statuses: RegionStatus[]
-): Promise<Region[]> {
-  const all = await listRegionsByTask(taskId)
-  const statusSet = new Set(statuses)
-  return all.filter((r) => statusSet.has(r.status))
+/** Returns all regions for a task regardless of is_active flag. */
+export async function listAllRegionsByTask(taskId: string): Promise<Region[]> {
+  const res = await db.execute({
+    sql:  'SELECT * FROM regions WHERE task_id = ? ORDER BY order_index ASC',
+    args: [taskId],
+  })
+  return res.rows.map(rowToRegion)
 }
 
 /**
  * Creates a new region row.
  * `region_id`, `created_at`, `updated_at` are generated automatically.
- * `script_tag_final` starts as `script_tag_original` per the design spec.
  */
 export async function createRegion(
   data: Omit<Region, 'region_id' | 'created_at' | 'updated_at'>
 ): Promise<Region> {
   const now = nowISO()
-  const region: Region = {
-    ...data,
-    region_id: generateId('RG'),
-    created_at: now,
-    updated_at: now,
-  }
-  await appendRow('regions', regionToRow(region))
+  const region: Region = { ...data, region_id: generateId('RG'), created_at: now, updated_at: now }
+  await db.execute({
+    sql: `INSERT INTO regions
+            (region_id, task_id, ls_task_id, ls_region_id, order_index,
+             bbox_x_percent, bbox_y_percent, bbox_width_percent, bbox_height_percent,
+             bbox_xmin, bbox_ymin, bbox_xmax, bbox_ymax, rotation,
+             script_tag_original, script_tag_final, status, is_active,
+             created_at, updated_at)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    args: [
+      region.region_id, region.task_id, region.ls_task_id, region.ls_region_id,
+      region.order_index,
+      region.bbox_x_percent, region.bbox_y_percent,
+      region.bbox_width_percent, region.bbox_height_percent,
+      region.bbox_xmin, region.bbox_ymin, region.bbox_xmax, region.bbox_ymax,
+      region.rotation,
+      region.script_tag_original, region.script_tag_final,
+      region.status, region.is_active ? 1 : 0,
+      region.created_at, region.updated_at,
+    ],
+  })
   return region
 }
 
 /**
- * Creates multiple region rows in a SINGLE Sheets API call.
- * Always prefer this over looping createRegion — avoids quota exhaustion
- * when importing tasks with many regions.
- *
- * `region_id`, `created_at`, `updated_at` are generated automatically for each.
+ * Bulk-creates regions in a single batch.
+ * Use this when importing a task to avoid N individual API calls.
  */
-export async function createRegions(
-  dataArray: Omit<Region, 'region_id' | 'created_at' | 'updated_at'>[]
+export async function createRegionsBatch(
+  dataList: Omit<Region, 'region_id' | 'created_at' | 'updated_at'>[]
 ): Promise<Region[]> {
-  if (dataArray.length === 0) return []
+  if (dataList.length === 0) return []
   const now = nowISO()
-  const regions: Region[] = dataArray.map((data) => ({
+  const regions: Region[] = dataList.map((data) => ({
     ...data,
-    region_id: generateId('RG'),
+    region_id:  generateId('RG'),
     created_at: now,
     updated_at: now,
   }))
-  await appendRows('regions', regions.map(regionToRow))
+
+  // Execute as a batch transaction
+  await db.batch(
+    regions.map((region) => ({
+      sql: `INSERT INTO regions
+              (region_id, task_id, ls_task_id, ls_region_id, order_index,
+               bbox_x_percent, bbox_y_percent, bbox_width_percent, bbox_height_percent,
+               bbox_xmin, bbox_ymin, bbox_xmax, bbox_ymax, rotation,
+               script_tag_original, script_tag_final, status, is_active,
+               created_at, updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      args: [
+        region.region_id, region.task_id, region.ls_task_id, region.ls_region_id,
+        region.order_index,
+        region.bbox_x_percent, region.bbox_y_percent,
+        region.bbox_width_percent, region.bbox_height_percent,
+        region.bbox_xmin, region.bbox_ymin, region.bbox_xmax, region.bbox_ymax,
+        region.rotation,
+        region.script_tag_original, region.script_tag_final,
+        region.status, region.is_active ? 1 : 0,
+        region.created_at, region.updated_at,
+      ],
+    })),
+    'write'
+  )
   return regions
 }
 
 /**
- * Updates a region's status, enforcing transition rules.
+ * Updates the status of a region, enforcing transition rules.
+ * Throws if the transition is invalid.
  */
-export async function updateRegionStatus(
-  regionId: string,
-  to: RegionStatus
-): Promise<Region> {
-  const r = await findRegionRow('region_id', regionId)
-  if (!r) throw new Error(`Region not found: ${regionId}`)
-  assertRegionTransition(r.region.status, to)
-
-  const updated: Region = { ...r.region, status: to, updated_at: nowISO() }
-  await updateRow('regions', r.rowNumber, regionToRow(updated))
+export async function updateRegionStatus(regionId: string, to: RegionStatus): Promise<Region> {
+  const region = await getRegionById(regionId)
+  if (!region) throw new Error(`Region not found: ${regionId}`)
+  assertRegionTransition(region.status, to)
+  const updated: Region = { ...region, status: to, updated_at: nowISO() }
+  await db.execute({
+    sql:  'UPDATE regions SET status = ?, updated_at = ? WHERE region_id = ?',
+    args: [to, updated.updated_at, regionId],
+  })
   return updated
 }
 
-/**
- * Updates the reviewer-controlled script_tag_final field.
- * Labelers can never call this.
- */
-export async function updateRegionScriptTagFinal(
-  regionId: string,
-  scriptTag: string
-): Promise<void> {
-  const r = await findRegionRow('region_id', regionId)
-  if (!r) throw new Error(`Region not found: ${regionId}`)
-
-  const updated: Region = {
-    ...r.region,
-    script_tag_final: scriptTag,
-    updated_at: nowISO(),
-  }
-  await updateRow('regions', r.rowNumber, regionToRow(updated))
+/** Updates the script_tag_final on a region (reviewer correction). */
+export async function updateRegionScriptTag(regionId: string, tag: string): Promise<Region> {
+  const region = await getRegionById(regionId)
+  if (!region) throw new Error(`Region not found: ${regionId}`)
+  const updated: Region = { ...region, script_tag_final: tag, updated_at: nowISO() }
+  await db.execute({
+    sql:  'UPDATE regions SET script_tag_final = ?, updated_at = ? WHERE region_id = ?',
+    args: [tag, updated.updated_at, regionId],
+  })
+  return updated
 }
 
-/**
- * Soft-deletes a region (sets is_active = FALSE).
- * Regions should never be hard-deleted.
- */
+/** Soft-deletes a region by setting is_active = false. */
 export async function deactivateRegion(regionId: string): Promise<void> {
-  const r = await findRegionRow('region_id', regionId)
-  if (!r) throw new Error(`Region not found: ${regionId}`)
-
-  const updated: Region = { ...r.region, is_active: false, updated_at: nowISO() }
-  await updateRow('regions', r.rowNumber, regionToRow(updated))
+  await db.execute({
+    sql:  'UPDATE regions SET is_active = 0, updated_at = ? WHERE region_id = ?',
+    args: [nowISO(), regionId],
+  })
 }
 
 /**
- * Returns true when ALL active regions of a task are in one of the given statuses.
- * Used to determine if a task can transition (e.g., all LABELED → submit to review).
+ * Returns true if all active regions for a task are in one of the given statuses.
+ * Used to check whether a task is ready to advance (all labeled, all reviewed, etc.).
  */
 export async function allRegionsInStatus(
   taskId: string,
-  ...statuses: RegionStatus[]
+  statuses: RegionStatus[]
 ): Promise<boolean> {
   const regions = await listRegionsByTask(taskId)
   if (regions.length === 0) return false

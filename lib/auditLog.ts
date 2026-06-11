@@ -1,4 +1,10 @@
-import { appendRow } from '@/lib/googleSheets'
+/**
+ * lib/auditLog.ts — SQL rewrite (Turso)
+ *
+ * Writes audit events to the audit_logs table.
+ * Never throws — audit failures must never crash the main request.
+ */
+import { db } from '@/lib/db'
 import { generateId } from '@/utils/ids'
 import { nowISO } from '@/utils/date'
 
@@ -10,6 +16,7 @@ export type AuditAction =
   | 'TASK_IMPORTED'
   | 'TASK_CLAIMED'
   | 'TASK_RELEASED'
+  | 'TASK_SUBMITTED'
   | 'REGION_LABELED'
   | 'REGION_REVIEWED'
   | 'REGION_CORRECTED'
@@ -19,11 +26,8 @@ export type AuditAction =
   | 'SYNC_SUCCESS'
 
 /**
- * Writes a row to the audit_logs sheet.
+ * Writes a row to the audit_logs table.
  * Call this from API routes and Server Actions — never from client components.
- *
- * Column order: log_id | timestamp | user_email | action | entity_type |
- *               entity_id | old_value | new_value | metadata
  */
 export async function logAction(
   userEmail: string,
@@ -35,19 +39,23 @@ export async function logAction(
   metadata: Record<string, unknown> = {}
 ): Promise<void> {
   try {
-    await appendRow('audit_logs', [
-      generateId('AL'),
-      nowISO(),
-      userEmail,
-      action,
-      entityType,
-      entityId,
-      oldValue,
-      newValue,
-      Object.keys(metadata).length > 0 ? JSON.stringify(metadata) : '',
-    ])
+    await db.execute({
+      sql: `INSERT INTO audit_logs
+              (log_id, timestamp, user_email, action, entity_type, entity_id, old_value, new_value, metadata)
+            VALUES (?,?,?,?,?,?,?,?,?)`,
+      args: [
+        generateId('AL'),
+        nowISO(),
+        userEmail,
+        action,
+        entityType,
+        entityId,
+        oldValue,
+        newValue,
+        Object.keys(metadata).length > 0 ? JSON.stringify(metadata) : '',
+      ],
+    })
   } catch (err) {
-    // Audit log failures must never crash the main request
     console.error('[auditLog] Failed to write audit log:', err)
   }
 }

@@ -1,5 +1,5 @@
 import { auth } from '@/auth'
-import { findRowByColumn, updateRow } from '@/lib/googleSheets'
+import { db } from '@/lib/db'
 import { logAction } from '@/lib/auditLog'
 import { nowISO } from '@/utils/date'
 
@@ -27,35 +27,27 @@ export const POST = auth(async (req) => {
     return Response.json({ error: 'userId is required' }, { status: 400 })
   }
 
-  // Prevent admin from disabling themselves
   if (userId === session.user.user_id) {
     return Response.json({ error: 'Cannot disable your own account' }, { status: 400 })
   }
 
-  const result = await findRowByColumn('users', 'user_id', userId)
-  if (!result) {
+  const res = await db.execute({
+    sql:  'SELECT status FROM users WHERE user_id = ? LIMIT 1',
+    args: [userId],
+  })
+  if (res.rows.length === 0) {
     return Response.json({ error: 'User not found' }, { status: 404 })
   }
 
-  const { row, rowNumber } = result
-  const now = nowISO()
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oldStatus = String((res.rows[0] as any).status)
 
-  await updateRow('users', rowNumber, [
-    row.user_id, row.email, row.name, row.password_hash,
-    row.role,
-    'DISABLED',
-    row.assigned_batch,
-    row.created_at, now, row.last_login_at, row.notes,
-  ])
+  await db.execute({
+    sql:  "UPDATE users SET status = 'DISABLED', updated_at = ? WHERE user_id = ?",
+    args: [nowISO(), userId],
+  })
 
-  await logAction(
-    session.user.email,
-    'USER_DISABLED',
-    'user',
-    userId,
-    row.status,
-    'DISABLED'
-  )
+  await logAction(session.user.email ?? '', 'USER_DISABLED', 'user', userId, oldStatus, 'DISABLED')
 
   return Response.json({ message: 'User disabled', userId })
 })

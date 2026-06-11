@@ -1,30 +1,31 @@
 /**
- * lib/users.ts — Read-only user helpers.
+ * lib/users.ts — SQL rewrite (Turso)
  *
- * WRITE PATH: auth.ts and app/actions/auth.ts own all writes to the users sheet.
- * This file provides read-only access for admin pages and API routes.
- * Never import auth.ts here — it would create a circular dependency.
+ * Read-only user helpers.
+ * WRITE PATH: auth.ts and app/actions/auth.ts own all writes to the users table.
+ * Never import auth.ts here — circular dependency.
  */
-import { readSheetAsObjects, findRowByColumn } from '@/lib/googleSheets'
+import { db } from '@/lib/db'
 import type { User, SafeUser, UserRole, UserStatus } from '@/types/user'
 
 // ---------------------------------------------------------------------------
 // Deserialiser
 // ---------------------------------------------------------------------------
 
-function rowToUser(row: Record<string, string>): User {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function rowToUser(row: Record<string, any>): User {
   return {
-    user_id:        row.user_id,
-    email:          row.email,
-    name:           row.name,
-    password_hash:  row.password_hash,
-    role:           row.role as UserRole,
-    status:         row.status as UserStatus,
-    assigned_batch: row.assigned_batch,
-    created_at:     row.created_at,
-    updated_at:     row.updated_at,
-    last_login_at:  row.last_login_at,
-    notes:          row.notes,
+    user_id:        String(row.user_id ?? ''),
+    email:          String(row.email ?? ''),
+    name:           String(row.name ?? ''),
+    password_hash:  String(row.password_hash ?? ''),
+    role:           String(row.role ?? 'PENDING') as UserRole,
+    status:         String(row.status ?? 'PENDING_APPROVAL') as UserStatus,
+    assigned_batch: String(row.assigned_batch ?? ''),
+    created_at:     String(row.created_at ?? ''),
+    updated_at:     String(row.updated_at ?? ''),
+    last_login_at:  String(row.last_login_at ?? ''),
+    notes:          String(row.notes ?? ''),
   }
 }
 
@@ -40,32 +41,44 @@ function toSafeUser(u: User): SafeUser {
 
 /** Returns a SafeUser (no password_hash) by user_id, or null if not found. */
 export async function getUserById(userId: string): Promise<SafeUser | null> {
-  const result = await findRowByColumn('users', 'user_id', userId)
-  return result ? toSafeUser(rowToUser(result.row)) : null
+  const res = await db.execute({
+    sql:  'SELECT * FROM users WHERE user_id = ? LIMIT 1',
+    args: [userId],
+  })
+  if (res.rows.length === 0) return null
+  return toSafeUser(rowToUser(res.rows[0]))
 }
 
 /** Returns a SafeUser by email (case-insensitive lookup), or null if not found. */
 export async function getUserByEmail(email: string): Promise<SafeUser | null> {
-  const result = await findRowByColumn('users', 'email', email.toLowerCase())
-  return result ? toSafeUser(rowToUser(result.row)) : null
+  const res = await db.execute({
+    sql:  'SELECT * FROM users WHERE LOWER(email) = LOWER(?) LIMIT 1',
+    args: [email],
+  })
+  if (res.rows.length === 0) return null
+  return toSafeUser(rowToUser(res.rows[0]))
 }
 
 /** Returns all users as SafeUser[]. Sorted alphabetically by email. */
 export async function listAllUsers(): Promise<SafeUser[]> {
-  const rows = await readSheetAsObjects('users')
-  return rows
-    .map((r) => toSafeUser(rowToUser(r)))
-    .sort((a, b) => a.email.localeCompare(b.email))
+  const res = await db.execute('SELECT * FROM users ORDER BY email ASC')
+  return res.rows.map((r) => toSafeUser(rowToUser(r)))
 }
 
 /** Returns only users with the given status. */
 export async function listUsersByStatus(status: UserStatus): Promise<SafeUser[]> {
-  const all = await listAllUsers()
-  return all.filter((u) => u.status === status)
+  const res = await db.execute({
+    sql:  'SELECT * FROM users WHERE status = ? ORDER BY email ASC',
+    args: [status],
+  })
+  return res.rows.map((r) => toSafeUser(rowToUser(r)))
 }
 
 /** Returns only users with the given role. */
 export async function listUsersByRole(role: UserRole): Promise<SafeUser[]> {
-  const all = await listAllUsers()
-  return all.filter((u) => u.role === role)
+  const res = await db.execute({
+    sql:  'SELECT * FROM users WHERE role = ? ORDER BY email ASC',
+    args: [role],
+  })
+  return res.rows.map((r) => toSafeUser(rowToUser(r)))
 }

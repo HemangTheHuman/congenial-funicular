@@ -1,5 +1,6 @@
 import { auth } from '@/auth'
-import { getTaskById, releaseTaskLock, updateTaskStatus } from '@/lib/tasks'
+import { getTaskById, releaseTaskLock, updateTaskStatus, incrementRegionCount } from '@/lib/tasks'
+import { listRegionsByTask, updateRegionStatus } from '@/lib/regions'
 import { logAction } from '@/lib/auditLog'
 
 export const dynamic = 'force-dynamic'
@@ -10,6 +11,9 @@ export const dynamic = 'force-dynamic'
  * Body: { task_id: string }
  *
  * Releases the caller's lock on a task and returns it to READY_FOR_LABELING.
+ * Any regions already marked LABELED or UNREADABLE are reset to PENDING_LABEL
+ * so the next labeler starts fresh.
+ *
  * Only the user who holds the lock can release it.
  */
 export const POST = auth(async (req) => {
@@ -42,6 +46,21 @@ export const POST = auth(async (req) => {
         { error: 'You do not hold the lock on this task' },
         { status: 403 }
       )
+    }
+
+    // Reset any partially-saved regions back to PENDING_LABEL
+    const regions = await listRegionsByTask(task_id)
+    let resetCount = 0
+    for (const region of regions) {
+      if (region.status === 'LABELED' || region.status === 'UNREADABLE') {
+        await updateRegionStatus(region.region_id, 'PENDING_LABEL')
+        resetCount++
+      }
+    }
+
+    // Undo the labeled_region_count that was incremented during the partial session
+    if (resetCount > 0) {
+      await incrementRegionCount(task_id, 'labeled', -resetCount)
     }
 
     // Clear lock fields, then transition status back to READY_FOR_LABELING
