@@ -123,9 +123,13 @@ export async function fetchAzureBlob(container: string, blobPath: string): Promi
     `x-ms-date:${date}\n` +
     `x-ms-version:${apiVersion}\n`
 
+  // Azure requires the CanonicalizedResource and URL to use URL-encoded paths
+  // but WITHOUT encoding slashes.
+  const encodedBlobPath = blobPath.split('/').map(encodeURIComponent).join('/')
+
   // CanonicalizedResource
   // For a GET with no query params: "/{account}/{container}/{blob}"
-  const canonicalizedResource = `/${account}/${container}/${blobPath}`
+  const canonicalizedResource = `/${account}/${container}/${encodedBlobPath}`
 
   // StringToSign for GET blob (Azure SharedKey scheme):
   // https://learn.microsoft.com/en-us/rest/api/storageservices/authorize-with-shared-key
@@ -154,7 +158,7 @@ export async function fetchAzureBlob(container: string, blobPath: string): Promi
     .update(stringToSign, 'utf8')
     .digest('base64')
 
-  const blobUrl = `https://${account}.blob.core.windows.net/${container}/${blobPath}`
+  const blobUrl = `https://${account}.blob.core.windows.net/${container}/${encodedBlobPath}`
 
   return fetch(blobUrl, {
     headers: {

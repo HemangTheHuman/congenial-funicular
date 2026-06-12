@@ -18,6 +18,10 @@ import {
   Eye,
   EyeOff,
   AlertTriangle,
+  ZoomIn,
+  ZoomOut,
+  Sun,
+  Moon,
 } from 'lucide-react'
 import type { Task } from '@/types/task'
 import type { Label as LabelType } from '@/types/label'
@@ -79,6 +83,12 @@ export function CorrectionWorkspaceClient({ task, allRegions, labelMap, reviewMa
   const [submitStatus, setSubmitStatus] = useState<SubmitStatus>('idle')
   const [submitError, setSubmitError] = useState('')
   const [showFullPage, setShowFullPage] = useState(true)
+
+  // Phase 13 image manipulation
+  const [imgBrightness, setImgBrightness] = useState(100)
+  const [imgContrast, setImgContrast] = useState(100)
+  const [imgInvert, setImgInvert] = useState(false)
+  const [fullPageZoom, setFullPageZoom] = useState(100)
 
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -216,8 +226,9 @@ export function CorrectionWorkspaceClient({ task, allRegions, labelMap, reviewMa
   const scale = Math.min(MAX_DISPLAY / cropW, MAX_DISPLAY / cropH, MAX_SCALE)
   const displayW = Math.round(cropW * scale)
   const displayH = Math.round(cropH * scale)
-  const centerX = (region.cropXmin + cropW / 2) * scale
-  const centerY = (region.cropYmin + cropH / 2) * scale
+  // transform-origin: top-left of the bbox in image pixel space (scaled)
+  const originX = region.cropXmin * scale
+  const originY = region.cropYmin * scale
 
   return (
     <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
@@ -232,70 +243,49 @@ export function CorrectionWorkspaceClient({ task, allRegions, labelMap, reviewMa
           <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
             Full Page
           </span>
-          <button
-            onClick={() => setShowFullPage((v) => !v)}
-            className="lg:hidden text-muted-foreground hover:text-foreground"
-            aria-label="Toggle full page"
-          >
-            {showFullPage ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-          </button>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => setFullPageZoom(z => Math.max(20, z - 20))} title="Zoom Out">
+              <ZoomOut className="h-3 w-3" />
+            </Button>
+            <span className="text-[10px] tabular-nums w-8 text-center">{fullPageZoom}%</span>
+            <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => setFullPageZoom(z => Math.min(500, z + 20))} title="Zoom In">
+              <ZoomIn className="h-3 w-3" />
+            </Button>
+            <div className="w-px h-3 bg-border mx-1" />
+            <button
+              onClick={() => setShowFullPage((v) => !v)}
+              className="lg:hidden text-muted-foreground hover:text-foreground"
+              aria-label="Toggle full page"
+            >
+              {showFullPage ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 overflow-auto p-2">
           {proxiedImageUrl ? (
-            <div className="relative inline-block w-full">
+            <div className="relative inline-block" style={{ width: `${fullPageZoom}%`, minWidth: '100%', transition: 'width 0.2s ease' }}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={proxiedImageUrl} alt="Full page" className="w-full h-auto block" loading="eager" />
 
-              {/* Bbox highlights for all regions */}
-              {allRegions.map((r, i) => {
-                const isCurrentCorrection = r.region_id === region.region_id
-                const isCorrectionTarget = correctionRegions.some(cr => cr.region_id === r.region_id)
-                
-                return (
-                  <div
-                    key={r.region_id}
-                    title={isCorrectionTarget ? `Needs Correction (Region ${i + 1})` : `Region ${i + 1}`}
-                    style={{
-                      position: 'absolute',
-                      left: `${r.bbox_x_percent}%`,
-                      top: `${r.bbox_y_percent}%`,
-                      width: `${r.bbox_width_percent}%`,
-                      height: `${r.bbox_height_percent}%`,
-                      transform: r.rotation ? `rotate(${r.rotation}deg)` : undefined,
-                      transformOrigin: 'center',
-                      border: isCurrentCorrection
-                        ? '3px solid #ef4444' // Red for active correction
-                        : isCorrectionTarget 
-                          ? '2px solid #f59e0b' // Orange for pending corrections
-                          : '1px solid rgba(99,102,241,0.3)', // Dimmed for approved/others
-                      background: isCurrentCorrection
-                        ? 'rgba(239,68,68,0.18)'
-                        : isCorrectionTarget
-                          ? 'rgba(245,158,11,0.1)'
-                          : 'rgba(99,102,241,0.05)',
-                      transition: 'border-color 0.15s, background 0.15s',
-                    }}
-                  >
-                    <span
-                      style={{
-                        position: 'absolute',
-                        top: -1,
-                        left: -1,
-                        fontSize: '9px',
-                        lineHeight: 1,
-                        padding: '1px 3px',
-                        background: isCurrentCorrection ? '#ef4444' : isCorrectionTarget ? '#f59e0b' : 'rgba(99,102,241,0.5)',
-                        color: '#fff',
-                        borderRadius: '0 0 2px 0',
-                        pointerEvents: 'none',
-                      }}
-                    >
-                      {i + 1}
-                    </span>
-                  </div>
-                )
-              })}
+              {/* Bbox highlight only for active region */}
+              {region && (
+                <div
+                  title="Current Region"
+                  style={{
+                    position:        'absolute',
+                    left:            `${region.bbox_x_percent}%`,
+                    top:             `${region.bbox_y_percent}%`,
+                    width:           `${region.bbox_width_percent}%`,
+                    height:          `${region.bbox_height_percent}%`,
+                    transform:       region.rotation ? `rotate(${region.rotation}deg)` : undefined,
+                    transformOrigin: 'top left',
+                    pointerEvents:   'none',
+                    border:          '2px solid #ef4444',
+                    background:      'rgba(239,68,68,0.18)',
+                  }}
+                />
+              )}
             </div>
           ) : (
             <div className="flex h-48 items-center justify-center text-muted-foreground text-sm">
@@ -342,11 +332,23 @@ export function CorrectionWorkspaceClient({ task, allRegions, labelMap, reviewMa
 
             {/* Crop preview */}
             <div>
-              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
-                Crop Preview
-                {region.rotation !== 0 && (
-                  <span className="ml-2 text-amber-600">↺ {region.rotation}°</span>
-                )}
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                  Crop Preview
+                  {region.rotation !== 0 && (
+                    <span className="ml-2 text-amber-600">↺ {region.rotation}°</span>
+                  )}
+                </div>
+                <div className="flex items-center gap-1">
+                  <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => setImgBrightness(b => Math.max(50, b - 20))} title="Decrease Brightness"><Moon className="h-3 w-3" /></Button>
+                  <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => setImgBrightness(b => Math.min(200, b + 20))} title="Increase Brightness"><Sun className="h-3 w-3" /></Button>
+                  <div className="w-px h-3 bg-border mx-1" />
+                  <Button variant="ghost" size="sm" className="h-6 px-2 text-[10px]" onClick={() => setImgContrast(c => c === 100 ? 150 : (c === 150 ? 200 : 100))} title="Toggle High Contrast">Contrast</Button>
+                  <Button variant="ghost" size="sm" className="h-6 px-2 text-[10px]" onClick={() => setImgInvert(i => !i)} title="Invert Colors">Invert</Button>
+                  {(imgBrightness !== 100 || imgContrast !== 100 || imgInvert) && (
+                    <Button variant="ghost" size="sm" className="h-6 px-2 text-[10px] text-muted-foreground ml-1" onClick={() => { setImgBrightness(100); setImgContrast(100); setImgInvert(false); }}>Reset</Button>
+                  )}
+                </div>
               </div>
               <div
                 className="relative overflow-hidden rounded-lg border bg-muted/40"
@@ -363,9 +365,11 @@ export function CorrectionWorkspaceClient({ task, allRegions, labelMap, reviewMa
                       height: task.original_height * scale,
                       left: -region.cropXmin * scale,
                       top: -region.cropYmin * scale,
-                      transform: region.rotation ? `rotate(${region.rotation}deg)` : undefined,
-                      transformOrigin: `${centerX}px ${centerY}px`,
+                      transform: region.rotation ? `rotate(${-region.rotation}deg)` : undefined,
+                      transformOrigin: `${originX}px ${originY}px`,
                       maxWidth: 'none',
+                      filter: `brightness(${imgBrightness}%) contrast(${imgContrast}%) ${imgInvert ? 'invert(100%)' : ''}`,
+                      transition: 'filter 0.2s ease',
                     }}
                   />
                 )}
