@@ -3,6 +3,8 @@ import { getTaskById, incrementRegionCount } from '@/lib/tasks'
 import { getRegionById, updateRegionStatus, updateRegionScriptTag } from '@/lib/regions'
 import { createReview, getLatestReviewForRegion } from '@/lib/reviews'
 import { logAction } from '@/lib/auditLog'
+import { APP_CONFIG } from '@/lib/appConfig'
+import { updateTaskStatus } from '@/lib/tasks'
 import type { ReviewStatus } from '@/types/review'
 
 export const dynamic = 'force-dynamic'
@@ -48,9 +50,21 @@ export const POST = auth(async (req) => {
     return Response.json({ error: 'task_id, region_id, and review_status are required' }, { status: 400 })
   }
 
-  const VALID_STATUSES: ReviewStatus[] = ['APPROVED', 'SCRIPT_WRONG', 'TEXT_WRONG', 'BOTH_WRONG']
+  // SEC-4: Validate review_status against allowed set (includes UNREADABLE_WRONG)
+  const VALID_STATUSES: ReviewStatus[] = ['APPROVED', 'SCRIPT_WRONG', 'TEXT_WRONG', 'BOTH_WRONG', 'UNREADABLE_WRONG']
   if (!VALID_STATUSES.includes(review_status)) {
     return Response.json({ error: `Invalid review_status: ${review_status}` }, { status: 400 })
+  }
+
+  // SEC-4: Validate final_script_tag against allowed list
+  if (final_script_tag) {
+    const formatted = final_script_tag.charAt(0).toUpperCase() + final_script_tag.slice(1).toLowerCase()
+    if (!APP_CONFIG.ALLOWED_SCRIPT_TAGS.includes(formatted)) {
+      return Response.json(
+        { error: `Invalid script tag '${final_script_tag}'. Allowed: ${APP_CONFIG.ALLOWED_SCRIPT_TAGS.join(', ')}` },
+        { status: 400 }
+      )
+    }
   }
 
   try {
@@ -72,12 +86,31 @@ export const POST = auth(async (req) => {
     }
 
     // 3. Determine region outcome status
+    // FEAT-1: UNREADABLE_WRONG sends back for correction (same as TEXT_WRONG)
     const approved = review_status === 'APPROVED' || review_status === 'SCRIPT_WRONG'
     const targetRegionStatus = approved ? 'APPROVED' : 'NEEDS_CORRECTION'
 
     // 4. Create review record
     const latestReview = await getLatestReviewForRegion(region_id)
     const review_round = (latestReview?.review_round ?? 0) + 1
+
+    // FEAT-2: Enforce MAX_REVIEW_ROUNDS — flag for admin if cap exceeded
+    if (!approved && review_round > APP_CONFIG.MAX_REVIEW_ROUNDS) {
+      // Set a special status to signal admin escalation needed
+      await updateTaskStatus(task_id, 'NEEDS_CORRECTION') // stays in correction but flagged
+      await logAction(
+        email ?? '',
+        'REVIEW_ROUND_LIMIT_EXCEEDED',
+        'task',
+        task_id,
+        task.status,
+        JSON.stringify({ review_round, max: APP_CONFIG.MAX_REVIEW_ROUNDS, region_id }),
+      )
+      return Response.json(
+        { error: `Maximum review rounds (${APP_CONFIG.MAX_REVIEW_ROUNDS}) exceeded. Task flagged for admin review.`, escalated: true },
+        { status: 422 }
+      )
+    }
 
     const formatted_final_script_tag = final_script_tag 
       ? final_script_tag.charAt(0).toUpperCase() + final_script_tag.slice(1).toLowerCase()
@@ -96,13 +129,13 @@ export const POST = auth(async (req) => {
       updateRegionStatus(region_id, targetRegionStatus),
     ])
 
-    // 5. Update script_tag_final if reviewer changed it
-    const scriptChanged =
+    // 5. INT-5: Always write script_tag_final on SCRIPT_WRONG or BOTH_WRONG,
+    //    even when the value hasn't changed, to make the reviewer intent explicit.
+    const shouldUpdateScript =
       (review_status === 'SCRIPT_WRONG' || review_status === 'BOTH_WRONG') &&
-      final_script_tag &&
-      formatted_final_script_tag !== region.script_tag_final
+      !!final_script_tag
 
-    if (scriptChanged) {
+    if (shouldUpdateScript) {
       await updateRegionScriptTag(region_id, formatted_final_script_tag)
     }
 

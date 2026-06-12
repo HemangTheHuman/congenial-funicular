@@ -29,6 +29,7 @@ export type AuditAction =
   | 'SYNC_STARTED'
   | 'SYNC_FAILED'
   | 'SYNC_SUCCESS'
+  | 'REVIEW_ROUND_LIMIT_EXCEEDED'
 
 /**
  * Writes a row to the audit_logs table.

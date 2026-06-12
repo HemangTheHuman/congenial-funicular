@@ -57,7 +57,8 @@ export const POST = auth(async (req) => {
       return Response.json({ error: 'Task has no active regions' }, { status: 422 })
     }
 
-    const TERMINAL_REVIEW_STATUSES = new Set(['APPROVED', 'NEEDS_CORRECTION'])
+    // INT-2: FINAL_APPROVED is terminal for re-review scenarios (regions approved in pass 1)
+    const TERMINAL_REVIEW_STATUSES = new Set(['APPROVED', 'NEEDS_CORRECTION', 'FINAL_APPROVED'])
     const unreviewed = regions.filter((r) => !TERMINAL_REVIEW_STATUSES.has(r.status))
     if (unreviewed.length > 0) {
       return Response.json(

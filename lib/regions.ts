@@ -192,3 +192,25 @@ export async function allRegionsInStatus(
   const statusSet = new Set(statuses)
   return regions.every((r) => statusSet.has(r.status))
 }
+
+/**
+ * SEC-1: Atomically updates region status only if the caller still holds
+ * a valid lock on the parent task. Returns true if successful.
+ */
+export async function atomicUpdateRegionStatusWithLock(
+  regionId: string,
+  status: RegionStatus,
+  taskId: string,
+  email: string
+): Promise<boolean> {
+  const now = nowISO()
+  const result = await db.execute({
+    sql: `UPDATE regions SET status = ?, updated_at = ?
+          WHERE region_id = ? AND EXISTS (
+            SELECT 1 FROM tasks 
+            WHERE task_id = ? AND locked_by = ? AND lock_expires_at > ?
+          )`,
+    args: [status, now, regionId, taskId, email, now],
+  })
+  return (result.rowsAffected ?? 0) > 0
+}

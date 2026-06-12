@@ -58,7 +58,8 @@ function scriptTagClass(tag: string): string {
 // Types
 // ---------------------------------------------------------------------------
 
-type ReviewChoice = 'APPROVED' | 'TEXT_WRONG' | 'SCRIPT_WRONG' | 'BOTH_WRONG'
+type ReviewChoice = 'APPROVED' | 'TEXT_WRONG' | 'SCRIPT_WRONG' | 'BOTH_WRONG' | 'UNREADABLE_WRONG'
+
 
 interface RegionDecision {
   choice:          ReviewChoice | null   // null = not yet decided
@@ -102,11 +103,25 @@ export function ReviewWorkspaceClient({
   const [decisions, setDecisions] = useState<Record<string, RegionDecision>>(() => {
     const init: Record<string, RegionDecision> = {}
     for (const r of regions) {
-      init[r.region_id] = {
-        choice:    null,
-        scriptTag: r.script_tag_final || r.script_tag_original,
-        note:      '',
-        saved:     false,
+      // UX-4: Load existing review decision from DB if already reviewed in this pass
+      // (APPROVED regions are already filtered out above, so we only need to restore rejections)
+      const isRejected = r.status === 'NEEDS_CORRECTION'
+      const review = reviewMap[r.region_id]
+      
+      if (isRejected && review) {
+        init[r.region_id] = {
+          choice:    review.review_status,
+          scriptTag: review.final_script_tag || r.script_tag_final || r.script_tag_original,
+          note:      review.review_note || '',
+          saved:     true, // It's in the DB
+        }
+      } else {
+        init[r.region_id] = {
+          choice:    null,
+          scriptTag: r.script_tag_final || r.script_tag_original,
+          note:      '',
+          saved:     false,
+        }
       }
     }
     return init
@@ -156,6 +171,19 @@ export function ReviewWorkspaceClient({
     return () => clearInterval(timer)
   }, [task.task_id])
 
+  // ── beforeunload guard — warn if any label is unsaved ───────────────────
+
+  useEffect(() => {
+    const hasUnsaved = Object.values(decisions).some((dec) => dec.choice !== null && !dec.saved)
+    if (!hasUnsaved) return
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [decisions])
+
   // ── Handlers ─────────────────────────────────────────────────────────────
 
   const updateDecision = useCallback(
@@ -203,6 +231,8 @@ export function ReviewWorkspaceClient({
   }, [region, decision, task.task_id, currentIndex, regions.length, updateDecision])
 
   const handleSubmit = useCallback(async () => {
+    // UX-3: Prevent double-submit
+    if (submitStatus === 'submitting') return
     setSubmitStatus('submitting')
     setSubmitError('')
 
@@ -565,6 +595,17 @@ export function ReviewWorkspaceClient({
                   className="border-red-500 bg-red-100 text-red-800"
                 />
               </div>
+              {/* FEAT-1: UNREADABLE_WRONG — only shown when labeler marked region unreadable */}
+              {label?.is_unreadable && (
+                <div className="mt-2">
+                  <DecisionBtn
+                    value="UNREADABLE_WRONG"
+                    label="Unreadable ✗ (should be readable)"
+                    icon={<Type className="h-4 w-4" />}
+                    className="border-purple-500 bg-purple-50 text-purple-800 w-full"
+                  />
+                </div>
+              )}
             </div>
 
             {/* Reviewer note */}

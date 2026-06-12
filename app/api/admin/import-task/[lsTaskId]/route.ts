@@ -4,6 +4,7 @@ import { parseLsTask } from '@/lib/labelStudioParser'
 import { getTaskByLsId, createTask, updateTaskStatus } from '@/lib/tasks'
 import { createRegionsBatch } from '@/lib/regions'
 import { logAction } from '@/lib/auditLog'
+import { db } from '@/lib/db'
 import type { Task } from '@/types/task'
 import type { Region } from '@/types/region'
 
@@ -74,6 +75,16 @@ export async function importSingleTask(
     last_sync_error:       '',
     completed_at:          '',
   })
+
+  // INT-4: Guard against zero-region tasks — delete the task row we just created
+  //         so it does not linger in READY_FOR_LABELING with nothing to label.
+  if (parsed.regions.length === 0) {
+    await db.execute({ sql: 'DELETE FROM tasks WHERE task_id = ?', args: [task.task_id] })
+    throw new Error(
+      `LS task ${lsTaskId} has no rectangle annotations and cannot be imported. ` +
+      `Please add bounding boxes in Label Studio first.`
+    )
+  }
 
   // Step 5: Create ALL region rows in a single Turso batch insert
   const regions = await createRegionsBatch(

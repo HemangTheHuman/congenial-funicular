@@ -28,8 +28,9 @@ export const POST = auth(async (req) => {
   if (!session?.user) return new Response('Unauthorized', { status: 401 })
 
   const { role, email } = session.user
-  if (role !== 'LABELER' && role !== 'ADMIN') {
-    return new Response('Forbidden', { status: 403 })
+  // SEC-6: Admin cannot submit labeling tasks
+  if (role !== 'LABELER') {
+    return new Response('Forbidden — only LABELERs can submit labeling tasks', { status: 403 })
   }
 
   let body: { task_id: string }
@@ -51,8 +52,9 @@ export const POST = auth(async (req) => {
 
   // 2. Load active regions and check all are labeled (or already submitted)
   const regions = await listRegionsByTask(task_id)
+  // INT-1: Only LABELED and UNREADABLE count as done — not REVIEW_PENDING
   const done = regions.filter(
-    (r) => r.status === 'LABELED' || r.status === 'UNREADABLE' || r.status === 'REVIEW_PENDING'
+    (r) => r.status === 'LABELED' || r.status === 'UNREADABLE'
   )
   const remaining = regions.length - done.length
 

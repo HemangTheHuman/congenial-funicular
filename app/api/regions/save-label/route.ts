@@ -1,6 +1,6 @@
 import { auth } from '@/auth'
 import { getTaskById, incrementRegionCount } from '@/lib/tasks'
-import { getRegionById, updateRegionStatus } from '@/lib/regions'
+import { getRegionById, atomicUpdateRegionStatusWithLock } from '@/lib/regions'
 import { createNewLabelVersion } from '@/lib/labels'
 import { logAction } from '@/lib/auditLog'
 
@@ -27,8 +27,9 @@ export const POST = auth(async (req) => {
   if (!session?.user) return new Response('Unauthorized', { status: 401 })
 
   const { role, email } = session.user
-  if (role !== 'LABELER' && role !== 'ADMIN') {
-    return new Response('Forbidden', { status: 403 })
+  // SEC-6: Admin can review but NOT label
+  if (role !== 'LABELER') {
+    return new Response('Forbidden — only LABELERs can save labels', { status: 403 })
   }
 
   let body: SaveLabelBody
@@ -41,6 +42,11 @@ export const POST = auth(async (req) => {
   const { task_id, region_id, text, is_unreadable, local_client_id = '' } = body
   if (!task_id || !region_id) {
     return Response.json({ error: 'task_id and region_id are required' }, { status: 400 })
+  }
+
+  // VAL-1: Reject empty transcription unless marked unreadable
+  if (!is_unreadable && (!text || text.trim() === '')) {
+    return Response.json({ error: 'Transcription text cannot be empty. Mark as unreadable if the region cannot be read.' }, { status: 422 })
   }
 
   // 1. Load task and region in parallel (fast indexed SQL lookups)
@@ -59,9 +65,23 @@ export const POST = auth(async (req) => {
     return Response.json({ error: 'Region does not belong to this task' }, { status: 400 })
   }
 
+  // SEC-3: Block writes to already-finalized regions
+  if (region.status === 'FINAL_APPROVED') {
+    return Response.json({ error: 'Cannot modify a finalized region' }, { status: 422 })
+  }
+
   const alreadyLabeled = region.status !== 'PENDING_LABEL'
 
-  // 2. Create new label version (UPDATE + INSERT, two fast SQL statements)
+  // 2. Atomic lock check and region status update (SEC-1)
+  const isCorrection = region.status === 'NEEDS_CORRECTION' || region.status === 'CORRECTED'
+  const targetStatus = isCorrection ? 'CORRECTED' : (is_unreadable ? 'UNREADABLE' : 'LABELED')
+  
+  const statusUpdated = await atomicUpdateRegionStatusWithLock(region_id, targetStatus, task_id, email ?? '')
+  if (!statusUpdated) {
+    return Response.json({ error: 'Lock expired or invalid. Please refresh the page.' }, { status: 409 })
+  }
+
+  // 3. Create new label version
   const label = await createNewLabelVersion(
     region_id, task_id, email ?? '',
     is_unreadable ? '' : (text ?? ''),
@@ -69,21 +89,17 @@ export const POST = auth(async (req) => {
     local_client_id
   )
 
-  // 3. Update region status + task counter in parallel
-  const isCorrection = region.status === 'NEEDS_CORRECTION' || region.status === 'CORRECTED'
-  const targetStatus = isCorrection ? 'CORRECTED' : (is_unreadable ? 'UNREADABLE' : 'LABELED')
-  
-  const [updatedRegion] = await Promise.all([
-    updateRegionStatus(region_id, targetStatus),
-    alreadyLabeled
-      ? Promise.resolve()
-      : incrementRegionCount(task_id, 'labeled', 1),
-  ])
+  if (!alreadyLabeled) {
+    await incrementRegionCount(task_id, 'labeled', 1)
+  }
 
   // 4. Audit (fire-and-forget)
   logAction(email ?? '', 'REGION_LABELED', 'region', region_id, '',
     JSON.stringify({ text: label.text, is_unreadable })
   ).catch(() => {})
 
-  return Response.json({ label, region: updatedRegion }, { status: 200 })
+  // Fetch the final region state to return
+  const finalRegion = await getRegionById(region_id)
+
+  return Response.json({ label, region: finalRegion }, { status: 200 })
 })

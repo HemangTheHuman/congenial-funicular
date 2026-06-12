@@ -4,8 +4,7 @@ import {
   getTaskById,
   listTasksForReview,
   getActiveTaskForLabeler,
-  setTaskLock,
-  updateTaskStatus,
+  atomicClaimTaskForReview,
 } from '@/lib/tasks'
 import { logAction } from '@/lib/auditLog'
 import { getTaskLockMinutes } from '@/lib/appConfig'
@@ -73,20 +72,17 @@ export const POST = auth(async (req) => {
     // 4. Set lock, transition status, assign reviewer (all fast SQL updates)
     const lockMinutes = await getTaskLockMinutes()
     const expiresAt   = addMinutes(nowISO(), lockMinutes)
-    const now         = nowISO()
-
-    await setTaskLock(task_id, email ?? '', expiresAt)
-    const updatedTask = await updateTaskStatus(task_id, 'REVIEWING_IN_PROGRESS')
-    await db.execute({
-      sql:  'UPDATE tasks SET assigned_reviewer = ?, updated_at = ? WHERE task_id = ?',
-      args: [email ?? '', now, task_id],
-    })
+    
+    const claimed = await atomicClaimTaskForReview(task_id, email ?? '', expiresAt)
+    if (!claimed) {
+      return Response.json({ error: 'Task was just claimed by another user. Please refresh.' }, { status: 409 })
+    }
 
     // 5. Audit log (fire-and-forget)
     logAction(email ?? '', 'REVIEW_CLAIMED', 'task', task_id, task.status, 'REVIEWING_IN_PROGRESS')
       .catch(() => {})
 
-    return Response.json({ task: { ...updatedTask, assigned_reviewer: email ?? '' } })
+    return Response.json({ task: claimed })
   } catch (err) {
     console.error('[POST /api/review/claim]', err)
     return Response.json({ error: 'Failed to claim task', detail: String(err) }, { status: 500 })

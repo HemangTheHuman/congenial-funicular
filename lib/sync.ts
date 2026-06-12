@@ -1,4 +1,4 @@
-import { getTaskById, updateTaskStatus } from '@/lib/tasks'
+import { getTaskById, updateTaskStatus, atomicClaimSync } from '@/lib/tasks'
 import { listRegionsByTask } from '@/lib/regions'
 import { listLatestLabelsByTask } from '@/lib/labels'
 import { updateSyncStatus } from '@/lib/syncQueue'
@@ -7,7 +7,10 @@ import { logAction } from '@/lib/auditLog'
 import type { Task } from '@/types/task'
 
 const AKSHARAMUKHA_API_URL = 'https://www.aksharamukha.com/api/convert'
-const DELIMITER = '___AKSHARAMUKHA_DELIM___'
+// SYN-1: Use a per-request UUID delimiter to avoid collision with actual label text
+function makeDelimiter(): string {
+  return `__DELIM_${Math.random().toString(36).slice(2)}_${Date.now()}__`
+}
 
 // ---------------------------------------------------------------------------
 // Transliteration Helper
@@ -16,6 +19,8 @@ const DELIMITER = '___AKSHARAMUKHA_DELIM___'
 async function bulkTransliterate(texts: string[]): Promise<string[]> {
   if (texts.length === 0) return []
 
+  // SYN-1: Fresh UUID delimiter per request — guaranteed not in Kaithi/Devanagari text
+  const DELIMITER = makeDelimiter()
   const combined = texts.join(DELIMITER)
 
   const res = await fetch(AKSHARAMUKHA_API_URL, {
@@ -73,14 +78,35 @@ async function buildSyncPayload(taskId: string): Promise<BuildSyncPayloadResult>
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const lsTask = await getLsTask(dbTask.ls_task_id) as any
   const lsAnnotations = lsTask.annotations || []
-  if (lsAnnotations.length === 0) {
-    throw new Error(`Task ${dbTask.ls_task_id} has no annotations in Label Studio to patch.`)
-  }
 
-  const annotation = lsAnnotations[0]
-  const annotationId = annotation.id
+  let annotation: any
+  let annotationId: number | string
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let oldResults: any[] = annotation.result || []
+  let oldResults: any[] = []
+
+  if (lsAnnotations.length === 0) {
+    // SYN-3: No annotation exists — create a new empty one
+    const createRes = await fetch(
+      `${process.env.LABEL_STUDIO_BASE_URL}/api/tasks/${dbTask.ls_task_id}/annotations/`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Token ${process.env.LABEL_STUDIO_API_TOKEN}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ result: [] }),
+      }
+    )
+    if (!createRes.ok) {
+      throw new Error(`Failed to create annotation for task ${dbTask.ls_task_id}: ${createRes.status}`)
+    }
+    annotation = await createRes.json()
+    annotationId = annotation.id
+  } else {
+    annotation = lsAnnotations[0]
+    annotationId = annotation.id
+    oldResults = annotation.result || []
+  }
 
   // 2. Fetch regions and labels from DB
   const regions = await listRegionsByTask(taskId)
@@ -211,7 +237,18 @@ async function buildSyncPayload(taskId: string): Promise<BuildSyncPayloadResult>
     }
   }
 
-  const finalPayload = [...processedOldResults, ...newResults]
+  // SYN-4: Deduplicate textarea results before appending — remove any existing
+  // textarea entries for the same region IDs to prevent duplicates on retry.
+  const existingTextareaIds = new Set(
+    processedOldResults
+      .filter((r: any) => r.type === 'textarea')
+      .map((r: any) => r.id)
+  )
+  const deduplicatedProcessedOld = processedOldResults.filter(
+    (r: any) => r.type !== 'textarea'
+  )
+
+  const finalPayload = [...deduplicatedProcessedOld, ...newResults]
 
   return {
     finalPayload,
@@ -234,9 +271,12 @@ export async function syncTaskToLabelStudio(taskId: string): Promise<Task> {
     const dbTaskPre = await getTaskById(taskId)
     if (dbTaskPre) currentStatus = dbTaskPre.status
 
-    // 0. Transition task to SYNC_PENDING to indicate active processing (allowed from FINAL_APPROVED or SYNC_FAILED)
+    // SYN-2: Atomically claim the SYNC_PENDING slot — returns false if another process is already syncing
     if (currentStatus === 'FINAL_APPROVED' || currentStatus === 'SYNC_FAILED') {
-      await updateTaskStatus(taskId, 'SYNC_PENDING')
+      const claimed = await atomicClaimSync(taskId)
+      if (!claimed) {
+        throw new Error(`Sync for task ${taskId} is already in progress by another process.`)
+      }
       currentStatus = 'SYNC_PENDING'
     }
 

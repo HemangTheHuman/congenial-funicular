@@ -93,6 +93,28 @@ export function SyncDashboardClient({ pending, failed, synced, user }: Props) {
     }
   }
 
+  async function handleRetryAll() {
+    setProcessing(true)
+    try {
+      const res = await fetch('/api/admin/sync/process', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ retryAllFailed: true })
+      })
+      const data = await res.json()
+      if (data.error) {
+        alert(`Failed: ${data.error}`)
+      } else {
+        alert(`Successfully requeued ${failed.length} tasks and processed a batch of ${data.processed}. Success: ${data.successCount}, Failed: ${data.failCount}`)
+      }
+      router.refresh()
+    } catch (err) {
+      alert(`Error retrying all tasks: ${err}`)
+    } finally {
+      setProcessing(false)
+    }
+  }
+
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <header className="border-b bg-card px-6 py-4 shrink-0">
@@ -170,15 +192,29 @@ export function SyncDashboardClient({ pending, failed, synced, user }: Props) {
         {failed.length > 0 && (
           <Card className="border-destructive/30">
             <CardHeader className="bg-destructive/5 pb-4">
-              <CardTitle className="flex items-center gap-2 text-destructive">
-                <AlertCircle className="h-5 w-5" /> Failed Syncs
-                <Badge variant="destructive" className="ml-2">
-                  {failed.length}
-                </Badge>
-              </CardTitle>
-              <CardDescription className="mt-1.5 text-destructive/80">
-                Tasks that failed to sync. Review the errors and retry.
-              </CardDescription>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="flex items-center gap-2 text-destructive">
+                    <AlertCircle className="h-5 w-5" /> Failed Syncs
+                    <Badge variant="destructive" className="ml-2">
+                      {failed.length}
+                    </Badge>
+                  </CardTitle>
+                  <CardDescription className="mt-1.5 text-destructive/80">
+                    Tasks that failed to sync. Review the errors and retry.
+                  </CardDescription>
+                </div>
+                <Button 
+                  size="sm" 
+                  variant="destructive" 
+                  onClick={handleRetryAll}
+                  disabled={processing}
+                  className="gap-2"
+                >
+                  {processing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                  Retry All Failed
+                </Button>
+              </div>
             </CardHeader>
             <CardContent className="p-0">
               <div className="divide-y max-h-64 overflow-y-auto">

@@ -100,6 +100,19 @@ export function CorrectionWorkspaceClient({ task, allRegions, labelMap, reviewMa
   const progressPercent = correctionRegions.length ? Math.round((savedCount / correctionRegions.length) * 100) : 0
   const allDone = savedCount === correctionRegions.length && correctionRegions.length > 0
 
+  // ── beforeunload guard — warn if any label is unsaved ───────────────────
+
+  useEffect(() => {
+    const hasUnsaved = Object.values(inputs).some((inp) => !inp.saved)
+    if (!hasUnsaved) return
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [inputs])
+
   // ── Lock refresh heartbeat ───────────────────────────────────────────────
 
   useEffect(() => {
@@ -167,6 +180,8 @@ export function CorrectionWorkspaceClient({ task, allRegions, labelMap, reviewMa
   }, [region, inputs, task.task_id, currentIndex, correctionRegions.length, updateInput])
 
   const handleSubmit = useCallback(async () => {
+    // UX-3: Prevent double-submit
+    if (submitStatus === 'submitting') return
     setSubmitStatus('submitting')
     setSubmitError('')
 

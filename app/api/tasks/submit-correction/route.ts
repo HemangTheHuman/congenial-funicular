@@ -48,6 +48,10 @@ export const POST = auth(async (req) => {
   if (task.status !== 'CORRECTION_IN_PROGRESS') {
     return Response.json({ error: 'Task is not in CORRECTION_IN_PROGRESS state' }, { status: 422 })
   }
+  // INT-3: Only the originally assigned labeler can submit corrections
+  if (task.assigned_labeler !== email) {
+    return Response.json({ error: 'Only the originally assigned labeler can submit this correction' }, { status: 403 })
+  }
   if (task.locked_by !== email) {
     return Response.json({ error: 'You do not hold the lock on this task' }, { status: 403 })
   }

@@ -11,6 +11,7 @@ export const dynamic = 'force-dynamic'
  * 
  * If taskId is provided, syncs that specific task (must be in sync_queue).
  * If retryFailed is true and taskId provided, sets it back to PENDING first.
+ * If retryAllFailed is true, requeues all FAILED tasks before processing.
  * If no taskId provided, processes the entire PENDING queue (up to a limit).
  */
 export const POST = auth(async (req) => {
@@ -19,7 +20,7 @@ export const POST = auth(async (req) => {
     return Response.json({ error: 'Unauthorized' }, { status: 403 })
   }
 
-  let body: { taskId?: string, retryFailed?: boolean } = {}
+  let body: { taskId?: string, retryFailed?: boolean, retryAllFailed?: boolean } = {}
   try {
     body = await req.json()
   } catch {
@@ -27,6 +28,15 @@ export const POST = auth(async (req) => {
   }
 
   try {
+    // FEAT-3: Retry All Failed
+    if (body.retryAllFailed) {
+      const failed = await import('@/lib/syncQueue').then(m => m.listFailedSyncEntries())
+      for (const entry of failed) {
+        await requeueFailedEntry(entry.task_id)
+      }
+      // Fall through to batch sync to process them
+    }
+
     // Single task sync (like Retry)
     if (body.taskId) {
       if (body.retryFailed) {

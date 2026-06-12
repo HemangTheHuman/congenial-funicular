@@ -130,6 +130,19 @@ export function WorkspaceClient({ task, regions, labelMap, proxiedImageUrl }: Pr
     return () => clearInterval(timer)
   }, [task.task_id])
 
+  // ── beforeunload guard — warn if any label is unsaved ───────────────────
+
+  useEffect(() => {
+    const hasUnsaved = Object.values(inputs).some((inp) => !inp.saved)
+    if (!hasUnsaved) return
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [inputs])
+
   // ── Focus textarea when region changes ───────────────────────────────────
 
   useEffect(() => {
@@ -184,6 +197,8 @@ export function WorkspaceClient({ task, regions, labelMap, proxiedImageUrl }: Pr
   }, [region, inputs, task.task_id, currentIndex, regions.length, updateInput])
 
   const handleSubmit = useCallback(async () => {
+    // UX-3: Prevent double-submit
+    if (submitStatus === 'submitting') return
     setSubmitStatus('submitting')
     setSubmitError('')
 

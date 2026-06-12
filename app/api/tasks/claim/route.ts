@@ -3,7 +3,7 @@ import {
   getTaskById,
   listAvailableTasksForLabeling,
   getActiveTaskForLabeler,
-  claimTask,
+  atomicClaimTaskForLabeling,
 } from '@/lib/tasks'
 import { logAction } from '@/lib/auditLog'
 import { getTaskLockMinutes } from '@/lib/appConfig'
@@ -73,12 +73,17 @@ export const POST = auth(async (req) => {
       )
     }
 
-    // 4. Claim the task (lock + assign + status transition in one Sheet write)
+    // 4. INT-6: Atomic claim — single SQL UPDATE with lock condition check
     const lockMinutes = await getTaskLockMinutes()
     const expiresAt = addMinutes(nowISO(), lockMinutes)
-    const claimed = await claimTask(task_id, email ?? '', expiresAt)
+    const claimed = await atomicClaimTaskForLabeling(task_id, email ?? '', expiresAt)
 
-    // 5. Audit log (non-blocking — errors are swallowed inside logAction)
+    if (!claimed) {
+      // Lost the race — another request claimed it between our availability check and this write
+      return Response.json({ error: 'Task was just claimed by another user. Please refresh.' }, { status: 409 })
+    }
+
+    // 5. Audit log (non-blocking)
     await logAction(email ?? '', 'TASK_CLAIMED', 'task', task_id, task.status, 'LABELING_IN_PROGRESS')
 
     return Response.json({ task: claimed })

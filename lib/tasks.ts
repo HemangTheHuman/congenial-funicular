@@ -304,3 +304,72 @@ export async function claimCorrectionTask(
     updated_at: now,
   }
 }
+/**
+ * INT-6 / SYN-2: Atomically claims a task for labeling using a single SQL UPDATE
+ * that checks lock conditions. Returns the updated task, or null if the claim
+ * was lost to a race (another request claimed first).
+ */
+export async function atomicClaimTaskForLabeling(
+  taskId: string,
+  labelerEmail: string,
+  expiresAt: string
+): Promise<Task | null> {
+  const now = nowISO()
+  const result = await db.execute({
+    sql: `UPDATE tasks SET
+            status           = 'LABELING_IN_PROGRESS',
+            assigned_labeler = ?,
+            locked_by        = ?,
+            lock_expires_at  = ?,
+            updated_at       = ?
+          WHERE task_id = ?
+            AND (status = 'READY_FOR_LABELING'
+              OR (status = 'LABELING_IN_PROGRESS'
+                AND (locked_by = '' OR lock_expires_at < ?)))`,
+    args: [labelerEmail, labelerEmail, expiresAt, now, taskId, now],
+  })
+  if ((result.rowsAffected ?? 0) === 0) return null // race lost
+  return getTaskById(taskId)
+}
+
+/**
+ * SYN-2: Atomically transitions a task to SYNC_PENDING only if it is in
+ * FINAL_APPROVED or SYNC_FAILED state. Returns false if another process
+ * already claimed the sync slot.
+ */
+export async function atomicClaimSync(taskId: string): Promise<boolean> {
+  const now = nowISO()
+  const result = await db.execute({
+    sql: `UPDATE tasks SET status = 'SYNC_PENDING', updated_at = ?
+          WHERE task_id = ? AND status IN ('FINAL_APPROVED', 'SYNC_FAILED')`,
+    args: [now, taskId],
+  })
+  return (result.rowsAffected ?? 0) > 0
+}
+
+/**
+ * SEC-2: Atomically claims a task for review using a single SQL UPDATE.
+ * Prevents double-locks by ensuring the task is in a valid state and
+ * checking that no other process grabbed it first.
+ */
+export async function atomicClaimTaskForReview(
+  taskId: string,
+  reviewerEmail: string,
+  expiresAt: string
+): Promise<Task | null> {
+  const now = nowISO()
+  const result = await db.execute({
+    sql: `UPDATE tasks SET
+            status            = 'REVIEWING_IN_PROGRESS',
+            assigned_reviewer = ?,
+            locked_by         = ?,
+            lock_expires_at   = ?,
+            updated_at        = ?
+          WHERE task_id = ?
+            AND status IN ('READY_FOR_REVIEW', 'READY_FOR_RE_REVIEW')
+            AND (locked_by = '' OR lock_expires_at < ?)`,
+    args: [reviewerEmail, reviewerEmail, expiresAt, now, taskId, now],
+  })
+  if ((result.rowsAffected ?? 0) === 0) return null
+  return getTaskById(taskId)
+}

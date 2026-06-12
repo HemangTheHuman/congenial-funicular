@@ -287,12 +287,21 @@ export default async function LabelerDashboardPage() {
         )}
         
         {/* ── Corrections Needed ─────────────────────────────────────────────── */}
-        {correctionsNeeded.length > 0 && (
-          <section aria-label="Corrections Needed">
-            <div className="flex items-center gap-2 mb-3">
-              <AlertTriangle className="h-5 w-5 text-destructive" />
-              <h2 className="text-base font-semibold text-destructive">Corrections Needed</h2>
-            </div>
+        <section aria-label="Corrections Needed">
+          <div className="flex items-center gap-2 mb-3">
+            <AlertTriangle className="h-5 w-5 text-destructive" />
+            <h2 className="text-base font-semibold text-destructive">Corrections Needed</h2>
+          </div>
+          
+          {correctionsNeeded.length === 0 ? (
+            <Card className="border-dashed">
+              <CardContent className="py-8 text-center text-muted-foreground flex flex-col items-center justify-center gap-2">
+                <CheckCircle2 className="h-8 w-8 text-green-500/50 mb-1" />
+                <p className="text-sm font-medium text-foreground">You're all caught up!</p>
+                <p className="text-xs">No tasks require correction right now.</p>
+              </CardContent>
+            </Card>
+          ) : (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {correctionsNeeded.map((task) => (
                 <Card key={task.task_id} className="flex flex-col overflow-hidden border-destructive/30 hover:shadow-md transition-shadow">
@@ -319,8 +328,8 @@ export default async function LabelerDashboardPage() {
                 </Card>
               ))}
             </div>
-          </section>
-        )}
+          )}
+        </section>
 
         {/* ── Available Tasks ─────────────────────────────────────────────────── */}
         <section aria-label="Available tasks">
