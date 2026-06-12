@@ -256,7 +256,7 @@ export async function syncTaskToLabelStudio(taskId: string): Promise<Task> {
     // 3. Update local DB statuses
     await updateSyncStatus(taskId, 'SYNCED')
     const updatedTask = await updateTaskStatus(taskId, 'SYNCED_TO_LABEL_STUDIO')
-    await logAction('SYSTEM', 'TASK_SYNCED', 'task', taskId, currentStatus, 'SYNCED_TO_LABEL_STUDIO')
+    await logAction('SYSTEM', 'SYNC_SUCCESS', 'task', taskId, currentStatus, 'SYNCED_TO_LABEL_STUDIO')
 
     return updatedTask
   } catch (err) {
