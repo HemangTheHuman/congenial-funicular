@@ -16,7 +16,7 @@ export default async function AdminDashboardPage() {
   const navItems = [
     { href: '/admin/users', label: 'User Management', description: 'Approve users and assign roles', icon: Users },
     { href: '/admin/import', label: 'Import Tasks', description: 'Import tasks from Label Studio', icon: FileText },
-    { href: '/admin/sync', label: 'Sync Queue', description: 'Manage Label Studio writeback (Phase 11)', icon: RefreshCw, disabled: true },
+    { href: '/admin/sync', label: 'Sync Queue', description: 'Manage Label Studio writeback', icon: RefreshCw, disabled: false },
     { href: '/admin/analytics', label: 'Analytics', description: 'Quality and productivity stats (Phase 12)', icon: BarChart3, disabled: true },
   ]
 

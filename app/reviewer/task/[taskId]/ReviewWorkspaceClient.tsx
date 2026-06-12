@@ -37,7 +37,7 @@ import type { RegionWithCrop } from './page'
 // Constants
 // ---------------------------------------------------------------------------
 
-const SCRIPT_TAGS = ['KAITHI', 'DEVANAGARI', 'ENGLISH', 'OTHER']
+const SCRIPT_TAGS = ['Kaithi', 'Devanagari', 'English']
 
 const SCRIPT_TAG_COLORS: Record<string, string> = {
   KAITHI:     'bg-amber-100 text-amber-800 border-amber-300',

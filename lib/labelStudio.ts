@@ -206,6 +206,14 @@ export async function submitAnnotation(lsTaskId: string | number, payload: unkno
 }
 
 /**
+ * Update an existing annotation in Label Studio.
+ * Used to preserve the "annotated by" field while appending the final transcriptions.
+ */
+export async function updateAnnotation(annotationId: string | number, payload: unknown) {
+  return lsPatch(`/api/annotations/${annotationId}/`, payload)
+}
+
+/**
  * Lightweight connection test — fetches the Label Studio health endpoint.
  * Returns true if reachable and authenticated.
  */

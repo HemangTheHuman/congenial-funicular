@@ -79,13 +79,17 @@ export const POST = auth(async (req) => {
     const latestReview = await getLatestReviewForRegion(region_id)
     const review_round = (latestReview?.review_round ?? 0) + 1
 
+    const formatted_final_script_tag = final_script_tag 
+      ? final_script_tag.charAt(0).toUpperCase() + final_script_tag.slice(1).toLowerCase()
+      : region.script_tag_final
+
     const [review, updatedRegion] = await Promise.all([
       createReview({
         region_id,
         task_id,
         reviewer_email:   email ?? '',
         review_status,
-        final_script_tag: final_script_tag || region.script_tag_final,
+        final_script_tag: formatted_final_script_tag,
         review_note:      review_note ?? '',
         review_round,
       }),
@@ -96,10 +100,10 @@ export const POST = auth(async (req) => {
     const scriptChanged =
       (review_status === 'SCRIPT_WRONG' || review_status === 'BOTH_WRONG') &&
       final_script_tag &&
-      final_script_tag !== region.script_tag_final
+      formatted_final_script_tag !== region.script_tag_final
 
     if (scriptChanged) {
-      await updateRegionScriptTag(region_id, final_script_tag)
+      await updateRegionScriptTag(region_id, formatted_final_script_tag)
     }
 
     // 6. Increment task counters
@@ -112,7 +116,7 @@ export const POST = auth(async (req) => {
       'region',
       region_id,
       region.status,
-      JSON.stringify({ review_status, final_script_tag, review_note }),
+      JSON.stringify({ review_status, final_script_tag: formatted_final_script_tag, review_note }),
     ).catch(() => {})
 
     return Response.json({ review, region: updatedRegion })

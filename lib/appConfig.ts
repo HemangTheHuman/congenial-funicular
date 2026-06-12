@@ -11,7 +11,7 @@ export const APP_CONFIG = {
   TASK_LOCK_MINUTES: parseInt(process.env.TASK_LOCK_MINUTES ?? '45', 10) || 45,
 
   /** Script tags shown in reviewer dropdowns. */
-  ALLOWED_SCRIPT_TAGS: ['KAITHI', 'DEVANAGARI', 'ENGLISH', 'OTHER'] as string[],
+  ALLOWED_SCRIPT_TAGS: ['Kaithi', 'Devanagari', 'English'] as string[],
 
   /** Crop padding around bbox in the workspace preview (0 = exact bbox). */
   CROP_PADDING_PERCENT: 0,
