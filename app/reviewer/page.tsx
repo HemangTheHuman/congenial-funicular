@@ -119,8 +119,8 @@ export default async function ReviewerDashboardPage() {
     getActiveTaskForLabeler(email),
     db.execute({
       sql: `SELECT
-              COUNT(*) as all_time,
-              SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) as today
+              COUNT(DISTINCT task_id) as all_time,
+              COUNT(DISTINCT CASE WHEN created_at >= ? THEN task_id ELSE NULL END) as today
             FROM reviews WHERE reviewer_email = ?`,
       args: [todayPrefix, email],
     }),
@@ -190,7 +190,7 @@ export default async function ReviewerDashboardPage() {
               icon={<BarChart2 className="h-3.5 w-3.5" />}
               label="Reviewed Today"
               value={reviewedToday}
-              sublabel={`${reviewedAllTime} all time`}
+              sublabel={`${reviewedAllTime} all time tasks`}
             />
           </div>
         </section>

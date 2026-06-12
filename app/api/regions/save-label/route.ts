@@ -59,7 +59,7 @@ export const POST = auth(async (req) => {
     return Response.json({ error: 'Region does not belong to this task' }, { status: 400 })
   }
 
-  const alreadyLabeled = region.status === 'LABELED' || region.status === 'UNREADABLE'
+  const alreadyLabeled = region.status !== 'PENDING_LABEL'
 
   // 2. Create new label version (UPDATE + INSERT, two fast SQL statements)
   const label = await createNewLabelVersion(
@@ -70,7 +70,9 @@ export const POST = auth(async (req) => {
   )
 
   // 3. Update region status + task counter in parallel
-  const targetStatus = is_unreadable ? 'UNREADABLE' : 'LABELED'
+  const isCorrection = region.status === 'NEEDS_CORRECTION' || region.status === 'CORRECTED'
+  const targetStatus = isCorrection ? 'CORRECTED' : (is_unreadable ? 'UNREADABLE' : 'LABELED')
+  
   const [updatedRegion] = await Promise.all([
     updateRegionStatus(region_id, targetStatus),
     alreadyLabeled

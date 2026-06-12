@@ -66,6 +66,23 @@ export async function listReviewsByTask(taskId: string): Promise<Review[]> {
   return res.rows.map(rowToReview)
 }
 
+/** Returns the most recent review for each region in a task. */
+export async function listLatestReviewsByTask(taskId: string): Promise<Review[]> {
+  const res = await db.execute({
+    sql: `SELECT * FROM reviews 
+          WHERE task_id = ? 
+          AND review_id IN (
+            SELECT review_id FROM (
+              SELECT review_id, ROW_NUMBER() OVER(PARTITION BY region_id ORDER BY review_round DESC) as rn 
+              FROM reviews 
+              WHERE task_id = ?
+            ) WHERE rn = 1
+          )`,
+    args: [taskId, taskId],
+  })
+  return res.rows.map(rowToReview)
+}
+
 /**
  * Creates a new review row.
  * `review_id`, `created_at`, `updated_at` are generated automatically.

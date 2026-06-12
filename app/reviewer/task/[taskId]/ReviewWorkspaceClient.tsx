@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -68,7 +68,7 @@ type SubmitStatus = 'idle' | 'submitting' | 'success' | 'error'
 
 interface Props {
   task:             Task
-  regions:          RegionWithCrop[]
+  allRegions:       RegionWithCrop[]
   labelMap:         Record<string, LabelType>
   reviewMap:        Record<string, Review>     // previous round reviews (for re-review context)
   proxiedImageUrl:  string
@@ -80,7 +80,7 @@ interface Props {
 
 export function ReviewWorkspaceClient({
   task,
-  regions,
+  allRegions,
   labelMap,
   reviewMap,
   proxiedImageUrl,
@@ -88,6 +88,11 @@ export function ReviewWorkspaceClient({
   const router = useRouter()
 
   // ── State ────────────────────────────────────────────────────────────────
+
+  // Only these regions are interactive in this workspace (exclude previously approved ones)
+  const regions = useMemo(() => {
+    return allRegions.filter(r => r.status !== 'APPROVED' && r.status !== 'FINAL_APPROVED')
+  }, [allRegions])
 
   const [currentIndex, setCurrentIndex] = useState(0)
   const [decisions, setDecisions] = useState<Record<string, RegionDecision>>(() => {
@@ -115,6 +120,7 @@ export function ReviewWorkspaceClient({
 
   const region   = regions[currentIndex]
   const decision = region ? (decisions[region.region_id] ?? { choice: null, scriptTag: '', note: '', saved: false }) : null
+  const originalIndex = region ? allRegions.findIndex((r) => r.region_id === region.region_id) + 1 : 0
 
   const savedCount     = regions.filter((r) => decisions[r.region_id]?.saved).length
   const progressPercent = regions.length ? Math.round((savedCount / regions.length) * 100) : 0
@@ -243,8 +249,12 @@ export function ReviewWorkspaceClient({
 
   if (regions.length === 0) {
     return (
-      <div className="flex-1 flex items-center justify-center text-muted-foreground">
-        No regions found for this task.
+      <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground gap-4">
+        <p>No regions left to review.</p>
+        <Button onClick={handleSubmit} disabled={submitStatus !== 'idle'} className="w-48 gap-2">
+          {submitStatus === 'submitting' ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+          Submit Task
+        </Button>
       </div>
     )
   }
@@ -331,27 +341,68 @@ export function ReviewWorkspaceClient({
               />
 
               {/* Bbox overlays for all regions */}
-              {regions.map((r, i) => {
+              {allRegions.map((r, i) => {
+                const targetIndex = regions.findIndex(tr => tr.region_id === r.region_id)
+                const isReviewable = targetIndex !== -1
+
+                if (!isReviewable) {
+                  return (
+                    <div
+                      key={r.region_id}
+                      title={`Region ${i + 1} (Approved in previous round)`}
+                      style={{
+                        position:        'absolute',
+                        left:            `${r.bbox_x_percent}%`,
+                        top:             `${r.bbox_y_percent}%`,
+                        width:           `${r.bbox_width_percent}%`,
+                        height:          `${r.bbox_height_percent}%`,
+                        transform:       r.rotation ? `rotate(${r.rotation}deg)` : undefined,
+                        transformOrigin: 'center',
+                        cursor:          'default',
+                        border:          '1px solid rgba(34,197,94,0.3)',
+                        background:      'rgba(34,197,94,0.05)',
+                      }}
+                    >
+                      <span
+                        style={{
+                          position:     'absolute',
+                          top:          -1,
+                          left:         -1,
+                          fontSize:     '9px',
+                          lineHeight:   1,
+                          padding:      '1px 3px',
+                          background:   'rgba(34,197,94,0.3)',
+                          color:        '#fff',
+                          borderRadius: '0 0 2px 0',
+                          pointerEvents: 'none',
+                        }}
+                      >
+                        {i + 1}
+                      </span>
+                    </div>
+                  )
+                }
+
                 const d   = decisions[r.region_id]
                 const col = d?.saved
                   ? d.choice === 'APPROVED' || d.choice === 'SCRIPT_WRONG'
                     ? 'rgba(34,197,94,0.7)'      // green — approved
                     : 'rgba(239,68,68,0.7)'       // red   — needs correction
-                  : i === currentIndex
+                  : targetIndex === currentIndex
                     ? '#f59e0b'                   // amber — current
                     : 'rgba(99,102,241,0.6)'      // indigo — unseen
                 const bg = d?.saved
                   ? d.choice === 'APPROVED' || d.choice === 'SCRIPT_WRONG'
                     ? 'rgba(34,197,94,0.12)'
                     : 'rgba(239,68,68,0.12)'
-                  : i === currentIndex
+                  : targetIndex === currentIndex
                     ? 'rgba(245,158,11,0.18)'
                     : 'rgba(99,102,241,0.08)'
 
                 return (
                   <div
                     key={r.region_id}
-                    onClick={() => setCurrentIndex(i)}
+                    onClick={() => setCurrentIndex(targetIndex)}
                     title={`Region ${i + 1}`}
                     style={{
                       position:        'absolute',
@@ -362,7 +413,7 @@ export function ReviewWorkspaceClient({
                       transform:       r.rotation ? `rotate(${r.rotation}deg)` : undefined,
                       transformOrigin: 'center',
                       cursor:          'pointer',
-                      border:          `${i === currentIndex ? '2px' : '1.5px'} solid ${col}`,
+                      border:          `${targetIndex === currentIndex ? '2px' : '1.5px'} solid ${col}`,
                       background:      bg,
                       transition:      'border-color 0.15s, background 0.15s',
                     }}
@@ -402,7 +453,7 @@ export function ReviewWorkspaceClient({
         <div className="px-5 py-3 border-b bg-card shrink-0 space-y-2">
           <div className="flex items-center justify-between text-sm">
             <span className="font-medium">
-              Region {currentIndex + 1} <span className="text-muted-foreground">of {regions.length}</span>
+              Region {originalIndex} <span className="text-muted-foreground">({currentIndex + 1} of {regions.length} to review)</span>
             </span>
             <span className="text-muted-foreground text-xs">{savedCount}/{regions.length} reviewed</span>
           </div>
@@ -429,7 +480,7 @@ export function ReviewWorkspaceClient({
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
                     src={proxiedImageUrl}
-                    alt={`Crop of region ${currentIndex + 1}`}
+                    alt={`Crop of region ${originalIndex}`}
                     style={{
                       position:        'absolute',
                       width:           task.original_width  * scale,
@@ -656,10 +707,11 @@ export function ReviewWorkspaceClient({
         {/* ── Region mini-map ──────────────────────────────────── */}
         <div className="border-t max-h-36 overflow-y-auto px-4 py-2 bg-muted/20 shrink-0">
           <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5 font-medium">
-            All Regions
+            Review Queue
           </p>
           <div className="flex flex-wrap gap-1">
             {regions.map((r, i) => {
+              const originalIndex = allRegions.findIndex(ar => ar.region_id === r.region_id) + 1
               const d         = decisions[r.region_id]
               const isCurrent = i === currentIndex
               const isSaved   = d?.saved
@@ -679,9 +731,9 @@ export function ReviewWorkspaceClient({
                           ? 'bg-red-100 text-red-800 hover:bg-red-200'
                           : 'bg-muted text-muted-foreground hover:bg-muted/80'}
                   `}
-                  title={`Region ${i + 1}${isSaved ? ` (${d.choice})` : ''}`}
+                  title={`Region ${originalIndex}${isSaved ? ` (${d.choice})` : ''}`}
                 >
-                  {i + 1}
+                  {originalIndex}
                 </button>
               )
             })}

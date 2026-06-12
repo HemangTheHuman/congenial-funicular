@@ -269,3 +269,38 @@ export async function updateTaskSyncStatus(
     args: [syncStatus, syncStatus, error, nowISO(), taskId],
   })
 }
+
+/**
+ * Atomically claims a task for correction: transitions status, sets lock.
+ */
+export async function claimCorrectionTask(
+  taskId: string,
+  labelerEmail: string,
+  expiresAt: string
+): Promise<Task> {
+  const task = await getTaskById(taskId)
+  if (!task) throw new Error(`Task not found: ${taskId}`)
+  assertTaskTransition(task.status, 'CORRECTION_IN_PROGRESS')
+
+  if (task.assigned_labeler !== labelerEmail) {
+    throw new Error(`Only the assigned labeler can claim this task for correction`)
+  }
+
+  const now = nowISO()
+  await db.execute({
+    sql: `UPDATE tasks SET
+            status           = 'CORRECTION_IN_PROGRESS',
+            locked_by        = ?,
+            lock_expires_at  = ?,
+            updated_at       = ?
+          WHERE task_id = ?`,
+    args: [labelerEmail, expiresAt, now, taskId],
+  })
+  return {
+    ...task,
+    status: 'CORRECTION_IN_PROGRESS',
+    locked_by: labelerEmail,
+    lock_expires_at: expiresAt,
+    updated_at: now,
+  }
+}

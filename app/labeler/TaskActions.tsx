@@ -58,9 +58,11 @@ export function ClaimButton({ taskId }: { taskId: string }) {
   async function handleClaim() {
     setError(null)
     setLocalLoading(true)
+    let success = false
     try {
       const { ok, status, data } = await postJson('/api/tasks/claim', { task_id: taskId })
       if (ok) {
+        success = true
         startTransition(() => {
           router.push(`/labeler/task/${taskId}`)
         })
@@ -78,7 +80,9 @@ export function ClaimButton({ taskId }: { taskId: string }) {
     } catch {
       setError('Network error — please try again.')
     } finally {
-      setLocalLoading(false)
+      if (!success) {
+        setLocalLoading(false)
+      }
     }
   }
 

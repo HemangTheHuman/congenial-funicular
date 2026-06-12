@@ -110,7 +110,7 @@ export default async function ReviewWorkspacePage({
       {/* ── Workspace ───────────────────────────────────────────────── */}
       <ReviewWorkspaceClient
         task={task}
-        regions={regionsWithCrop}
+        allRegions={regionsWithCrop}
         labelMap={labelMap}
         reviewMap={reviewMap}
         proxiedImageUrl={proxiedImageUrl}

@@ -12,24 +12,34 @@ import { Loader2, CheckSquare, X } from 'lucide-react'
 export function ReviewClaimButton({ taskId }: { taskId: string }) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
+  const [localLoading, setLocalLoading] = useState(false)
   const [error, setError] = useState('')
+
+  const loading = isPending || localLoading
 
   const handleClaim = useCallback(async () => {
     setError('')
+    setLocalLoading(true)
+    let success = false
     try {
       const res = await fetch('/api/review/claim', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ task_id: taskId }),
       })
-      const data = await res.json()
+      const data = await res.json().catch(() => ({}))
       if (!res.ok) {
         setError(data.error ?? `Error ${res.status}`)
         return
       }
+      success = true
       startTransition(() => router.push(`/reviewer/task/${taskId}`))
     } catch {
       setError('Network error. Please try again.')
+    } finally {
+      if (!success) {
+        setLocalLoading(false)
+      }
     }
   }, [taskId, router])
 
@@ -42,15 +52,15 @@ export function ReviewClaimButton({ taskId }: { taskId: string }) {
         id={`claim-review-${taskId}`}
         size="sm"
         className="w-full gap-1"
-        disabled={isPending}
+        disabled={loading}
         onClick={handleClaim}
       >
-        {isPending ? (
+        {loading ? (
           <Loader2 className="h-4 w-4 animate-spin" />
         ) : (
           <CheckSquare className="h-4 w-4" />
         )}
-        {isPending ? 'Claiming…' : 'Start Review'}
+        {loading ? 'Claiming…' : 'Start Review'}
       </Button>
     </div>
   )
